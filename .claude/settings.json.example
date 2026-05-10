@@ -1,0 +1,43 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm run *)",
+      "Bash(npm test *)",
+      "Bash(npm run dev *)",
+      "Bash(npm run build *)",
+      "Bash(npx tsc *)",
+      "Bash(npm install *)",
+      "Bash(git *)",
+      "Bash(mkdir *)",
+      "Bash(rm *)",
+      "Bash(cp *)",
+      "Bash(mv *)",
+      "Bash(chmod *)",
+      "Bash(curl *)",
+      "Bash(cat *)",
+      "Bash(ls *)",
+      "Bash(jq *)",
+      "Bash(npx playwright *)",
+      "Bash(node *)",
+      "Bash(python *)",
+      "Bash(python3 *)",
+      "Bash(pip *)",
+      "Bash(go *)",
+      "Bash(cargo *)",
+      "Bash(docker *)",
+      "WebSearch",
+      "WebFetch",
+      "Read(/**)",
+      "Edit(/**)",
+      "Write(/**)",
+      "Glob(/**)",
+      "Grep(/**)"
+    ],
+    "deny": [
+      "Bash(rm -rf /*)",
+      "Bash(rm -rf ~)",
+      "Bash(git push --force origin main)",
+      "Bash(git push --force origin master)"
+    ]
+  }
+}

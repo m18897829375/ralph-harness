@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-playwright"],
+      "description": "Playwright MCP server for browser automation testing. Required by Ralph Evaluator to test UI features in a real browser.",
+      "env": {}
+    },
+    "context7": {
+      "command": "npx",
+      "args": ["-y", "@anthropic/mcp-context7"],
+      "description": "Context7 MCP server for fetching up-to-date library documentation. Used by Generator when researching best practices before drafting contracts.",
+      "env": {}
+    }
+  }
+}
