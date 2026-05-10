@@ -1,8 +1,8 @@
-# Ralph Agent Instructions
+# Ralph Harness — Agent Instructions
 
 ## Overview
 
-Ralph is an autonomous AI agent loop that runs AI coding tools (Amp or Claude Code) repeatedly until all PRD items are complete. Each iteration is a fresh instance with clean context.
+Ralph Harness is an autonomous AI agent loop that runs AI coding tools (Amp or Claude Code) repeatedly until all PRD items are complete. Each iteration is a fresh instance with clean context.
 
 Ralph supports two modes:
 

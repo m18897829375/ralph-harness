@@ -1,5 +1,5 @@
 ﻿#!/bin/bash
-# Ralph Wiggum - Autonomous AI agent loop with Generator-Evaluator harness
+# Ralph Harness — Autonomous AI agent loop with Generator-Evaluator architecture
 # Usage: ./ralph.sh [--mode harness|simple] [--tool amp|claude] [--keep-alive] [--single-pass]
 #                  [--audit] [--track-cost] [--max-retries N] [--max-contract-rounds N]
 #                  [--degradation-threshold N] [max_iterations]
