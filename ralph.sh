@@ -487,6 +487,88 @@ verify_evaluator_evaluate_output() {
 }
 
 # ============================================================
+# Agent wait with output detection + heartbeat
+# ============================================================
+
+# Check if agent has produced expected output for current phase
+_check_agent_output() {
+  local pid="$1"
+  local phase
+  phase=$(cat "$PHASE_FILE" 2>/dev/null)
+
+  case "$phase" in
+    evaluator-evaluate)
+      if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
+        local score
+        score=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null)
+        if [ "$score" != "-1" ] && [ "$score" != "null" ] && [ -n "$score" ]; then
+          echo "  [DETECT] evaluation.json ready (score: $score/100). Proceeding..."
+          kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
+          return 0
+        fi
+      fi
+      ;;
+    generator-contract)
+      if [ -f "$CONTRACT_FILE" ] && [ -s "$CONTRACT_FILE" ]; then
+        local status
+        status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null)
+        if [ -n "$status" ]; then
+          echo "  [DETECT] contract.json ready (status: $status). Proceeding..."
+          kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
+          return 0
+        fi
+      fi
+      ;;
+    evaluator-contract|evaluator-user-resolution)
+      if [ -f "$CONTRACT_FILE" ] && [ -s "$CONTRACT_FILE" ]; then
+        local status
+        status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null)
+        case "$status" in
+          locked|generator_revise)
+            echo "  [DETECT] contract.json review done (status: $status). Proceeding..."
+            kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
+            return 0
+            ;;
+        esac
+      fi
+      ;;
+    generator-build)
+      ;;  # Build phase: let process exit on its own
+  esac
+  return 1
+}
+
+# Wait for agent process with heartbeat and output detection
+wait_for_agent() {
+  local pid="$1"
+  local phase_label="$2"
+  local output_ready=false
+  local elapsed=0
+  local tick=60
+  local heartbeat=600
+
+  while kill -0 "$pid" 2>/dev/null; do
+    sleep $tick
+    elapsed=$((elapsed + tick))
+
+    # Heartbeat every 10 minutes (keeps Claude Code engaged)
+    if [ $((elapsed % heartbeat)) -eq 0 ]; then
+      echo "  [HEARTBEAT] $phase_label — PID $pid running $((elapsed / 60)) min..."
+    fi
+
+    # Output file detection every 60s, after 2-min grace period
+    if [ "$output_ready" = false ] && [ $elapsed -ge 120 ]; then
+      if _check_agent_output "$pid"; then
+        output_ready=true
+      fi
+    fi
+  done
+
+  wait "$pid" 2>/dev/null
+  return 0
+}
+
+# ============================================================
 # Helper: Run an AI instance with a given prompt file
 # ============================================================
 run_agent() {
@@ -501,7 +583,7 @@ run_agent() {
     cat "$prompt_file" | claude --dangerously-skip-permissions --print 2>&1 || true &
     local agent_pid=$!
     echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
-    wait $agent_pid
+    wait_for_agent "$agent_pid" "$phase_label"
     rm -f "${RALPH_DIR}/agent-pid.txt"
   fi
 
@@ -663,7 +745,7 @@ run_agent_keepalive() {
   fi
   local agent_pid=$!
   echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
-  wait $agent_pid
+  wait_for_agent "$agent_pid" "$phase_label"
   rm -f "${RALPH_DIR}/agent-pid.txt"
 
   cost_track_end "$phase_label"
