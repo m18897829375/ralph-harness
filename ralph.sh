@@ -569,6 +569,68 @@ wait_for_agent() {
 }
 
 # ============================================================
+# Context assembly: pre-load all required files into stdin
+# ============================================================
+assemble_agent_context() {
+  local prompt_file="$1"
+  local phase
+  phase=$(cat "$PHASE_FILE" 2>/dev/null)
+
+  # 1. Agent prompt (always first)
+  cat "$prompt_file"
+
+  # 2. prd.json (all phases need project context)
+  if [ -f "$PRD_FILE" ]; then
+    echo ""; echo "=== PROJECT CONTEXT (prd.json) ==="
+    cat "$PRD_FILE"
+  fi
+
+  # 3. Codebase Patterns from progress.txt
+  if [ -f "$PROGRESS_FILE" ]; then
+    local patterns
+    patterns=$(awk '/^## Codebase Patterns/,/^---$|^## [0-9]/{print}' "$PROGRESS_FILE" 2>/dev/null)
+    if [ -n "$patterns" ]; then
+      echo ""; echo "=== CODEBASE PATTERNS ==="
+      echo "$patterns"
+    fi
+  fi
+
+  # 4. Phase-specific files
+  case "$phase" in
+    generator-contract)
+      [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== CURRENT CONTRACT ===" && cat "$CONTRACT_FILE"
+      if [ -f "$EVALUATION_FILE" ]; then
+        echo ""; echo "=== PREVIOUS EVALUATION ==="
+        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
+      fi
+      ;;
+    generator-build)
+      [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== LOCKED CONTRACT (DO NOT MODIFY) ===" && cat "$CONTRACT_FILE"
+      if [ -f "$EVALUATION_FILE" ]; then
+        echo ""; echo "=== PREVIOUS EVALUATION FEEDBACK ==="
+        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
+      fi
+      ;;
+    evaluator-contract)
+      [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== PROPOSED CONTRACT ===" && cat "$CONTRACT_FILE"
+      [ -f "${RALPH_DIR}/contract-scores.txt" ] && echo "" && echo "=== ROUND HISTORY ===" && cat "${RALPH_DIR}/contract-scores.txt"
+      ;;
+    evaluator-evaluate)
+      [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== LOCKED CONTRACT ===" && cat "$CONTRACT_FILE"
+      if [ -f "$EVALUATION_FILE" ]; then
+        echo ""; echo "=== PREVIOUS EVALUATION ==="
+        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
+      fi
+      ;;
+    evaluator-user-resolution)
+      [ -f "${RALPH_DIR}/user-resolution.md" ] && echo "" && echo "=== USER RESOLUTION ===" && cat "${RALPH_DIR}/user-resolution.md"
+      [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== CURRENT CONTRACT ===" && cat "$CONTRACT_FILE"
+      [ -f "${RALPH_DIR}/contract-scores.txt" ] && echo "" && echo "=== ROUND HISTORY ===" && cat "${RALPH_DIR}/contract-scores.txt"
+      ;;
+  esac
+}
+
+# ============================================================
 # Helper: Run an AI instance with a given prompt file
 # ============================================================
 run_agent() {
@@ -578,9 +640,9 @@ run_agent() {
   cost_track_start "$phase_label"
 
   if [[ "$TOOL" == "amp" ]]; then
-    cat "$prompt_file" | amp --dangerously-allow-all 2>&1 || true
+    assemble_agent_context "$prompt_file" | amp --dangerously-allow-all 2>&1 || true
   else
-    cat "$prompt_file" | claude --dangerously-skip-permissions --print 2>&1 || true &
+    assemble_agent_context "$prompt_file" | claude --dangerously-skip-permissions --print 2>&1 || true &
     local agent_pid=$!
     echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
     wait_for_agent "$agent_pid" "$phase_label"
@@ -1332,7 +1394,7 @@ run_harness_keepalive() {
 
       if [ "$gen_session_started" = false ]; then
         # First call: full prompt to initialize session with our known session ID
-        run_agent_keepalive "$gen_session_id" "ka-contract-${round}-gen-${story_id}" "$(cat "$GENERATOR_PROMPT")" "true"
+        run_agent_keepalive "$gen_session_id" "ka-contract-${round}-gen-${story_id}" "$(assemble_agent_context "$GENERATOR_PROMPT")" "true"
         gen_session_started=true
       else
         # Resume: only phase instruction, full prompt is in conversation history (KV-cached!)
@@ -1347,7 +1409,7 @@ run_harness_keepalive() {
       set_phase "evaluator-contract"
 
       if [ "$eval_session_started" = false ]; then
-        run_agent_keepalive "$eval_session_id" "ka-contract-${round}-eval-${story_id}" "$(cat "$EVALUATOR_PROMPT")" "true"
+        run_agent_keepalive "$eval_session_id" "ka-contract-${round}-eval-${story_id}" "$(assemble_agent_context "$EVALUATOR_PROMPT")" "true"
         eval_session_started=true
       else
         run_agent_keepalive "$eval_session_id" "ka-contract-${round}-eval-${story_id}" \
