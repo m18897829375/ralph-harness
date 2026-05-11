@@ -1194,6 +1194,8 @@ run_harness_keepalive() {
     echo "  Story: $story_id - $story_title (keep-alive iteration $iteration)"
     echo "==============================================================="
 
+    contract_locked=false  # Reset for each story
+
     # Check for pending user resolution from previous failed negotiation
     if [ -f "${RALPH_DIR}/user-resolution.md" ]; then
       echo "  Detected user-resolution.md for $story_id — sending to Evaluator..."
@@ -1580,6 +1582,8 @@ run_harness_mode() {
     echo "==============================================================="
     echo "  Story: $story_id - $story_title (Iteration $iteration)"
     echo "==============================================================="
+
+    contract_locked=false  # Reset for each story
 
     # Check for pending user resolution from previous failed negotiation
     if [ -f "${RALPH_DIR}/user-resolution.md" ]; then
