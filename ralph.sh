@@ -589,10 +589,16 @@ assemble_agent_context() {
   # 1. Agent prompt (always first)
   cat "$prompt_file"
 
-  # 2. prd.json (all phases need project context)
+  # 2. prd.json — summary of all stories + full details of current story only
   if [ -f "$PRD_FILE" ]; then
-    echo ""; echo "=== PROJECT CONTEXT (prd.json) ==="
-    cat "$PRD_FILE"
+    echo ""; echo "=== PROJECT CONTEXT ==="
+    jq '{
+      projectName,
+      branchName,
+      techStack,
+      storyProgress: [.userStories[] | {id, title, passes, bestEffort, retryCount}],
+      currentStory: [.userStories[] | select(.passes == false)] | first
+    }' "$PRD_FILE" 2>/dev/null || cat "$PRD_FILE"  # fallback to full file if jq fails
   fi
 
   # 3. Codebase Patterns from progress.txt
