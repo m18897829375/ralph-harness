@@ -7,8 +7,15 @@
 set -e
 
 # Force UTF-8 encoding for Chinese/Unicode on Windows MSYS2
-export LANG=en_US.UTF-8
-export LC_ALL=en_US.UTF-8
+# Detect available locale: C.UTF-8 is glibc built-in, en_US.UTF-8 is common fallback
+if locale -a 2>/dev/null | grep -qi "C.UTF-8\|C.utf8"; then
+  export LC_ALL=C.UTF-8
+elif locale -a 2>/dev/null | grep -qi "en_US.UTF-8\|en_US.utf8\|en_US.utf-8"; then
+  export LC_ALL=$(locale -a 2>/dev/null | grep -i "en_US.utf" | head -1)
+else
+  export LC_ALL=C
+fi
+export LANG="$LC_ALL"
 
 # ============================================================
 # Parse arguments
@@ -332,7 +339,7 @@ exit_for_user_resolution() {
   echo "==============================================================="
 
   RALPH_NORMAL_EXIT=true
-  exit 0
+  exit 2  # 2 = contract negotiation failed, needs human intervention
 }
 
 write_evaluator_feedback() {
@@ -346,10 +353,10 @@ write_evaluator_feedback() {
 
 $(if [ -f "$CONTRACT_FILE" ]; then
     echo "## Evaluator's Response"
-    jq -r '.history[-1].message // "No specific feedback"' "$CONTRACT_FILE"
+    jq -r '.history[-1].message // "No specific feedback"' "$CONTRACT_FILE" 2>/dev/null || echo "N/A"
     echo ""
     echo "## Current Contract Status"
-    jq -r '.status' "$CONTRACT_FILE"
+    jq -r '.status // "unknown"' "$CONTRACT_FILE" 2>/dev/null || echo "unknown"
   else
     echo "Evaluator did not modify contract.json"
   fi)
@@ -400,7 +407,7 @@ $(cat "$CONTRACT_FILE" 2>/dev/null | jq '.' 2>/dev/null || echo "No contract.jso
 
   if [ -f "$CONTRACT_FILE" ]; then
     local status
-    status=$(jq -r '.status' "$CONTRACT_FILE")
+    status=$(jq -r '.status // "unknown"' "$CONTRACT_FILE" 2>/dev/null) || status="parse_error"
     [ "$status" = "locked" ] && return 0
   fi
   return 1
@@ -1001,7 +1008,7 @@ update_prd_evaluation() {
 # ============================================================
 get_contract_status() {
   if [ -f "$CONTRACT_FILE" ]; then
-    jq -r '.status // "unknown"' "$CONTRACT_FILE"
+    jq -r '.status // "unknown"' "$CONTRACT_FILE" 2>/dev/null || echo "parse_error"
   else
     echo "none"
   fi
@@ -1188,7 +1195,7 @@ run_harness_single_pass() {
       verify_evaluator_contract_output
 
       local round_score
-      round_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
+      round_score=$(jq -r '.score // 0' "$CONTRACT_FILE" 2>/dev/null || echo "0")
       cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${round}.json"
       echo "$round $round_score" >> "${RALPH_DIR}/contract-scores.txt"
 
@@ -1436,7 +1443,7 @@ run_harness_keepalive() {
 
       # Save round backup
       local round_score
-      round_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
+      round_score=$(jq -r '.score // 0' "$CONTRACT_FILE" 2>/dev/null || echo "0")
       cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${round}.json"
       echo "$round $round_score" >> "${RALPH_DIR}/contract-scores.txt"
       echo "  Score: $round_score/100"
@@ -1478,7 +1485,7 @@ run_harness_keepalive() {
 
           if [ -f "$CONTRACT_FILE" ]; then
             local extra_score
-            extra_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
+            extra_score=$(jq -r '.score // 0' "$CONTRACT_FILE" 2>/dev/null || echo "0")
             local extra_round=$((MAX_CONTRACT_ROUNDS + 1))
             cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${extra_round}.json"
             echo "$extra_round $extra_score" >> "${RALPH_DIR}/contract-scores.txt"
@@ -1811,7 +1818,7 @@ run_harness_mode() {
 
       # Save this round's contract and its score
       local round_score
-      round_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
+      round_score=$(jq -r '.score // 0' "$CONTRACT_FILE" 2>/dev/null || echo "0")
       cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${round}.json"
       echo "$round $round_score" >> "${RALPH_DIR}/contract-scores.txt"
       echo "  Contract score: $round_score/100"
@@ -1856,7 +1863,7 @@ run_harness_mode() {
 
           if [ -f "$CONTRACT_FILE" ]; then
             local extra_score
-            extra_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
+            extra_score=$(jq -r '.score // 0' "$CONTRACT_FILE" 2>/dev/null || echo "0")
             local extra_round=$((MAX_CONTRACT_ROUNDS + 1))
             cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${extra_round}.json"
             echo "$extra_round $extra_score" >> "${RALPH_DIR}/contract-scores.txt"
