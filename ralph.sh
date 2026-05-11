@@ -22,6 +22,7 @@ AUDIT=false
 TRACK_COST=false
 SINGLE_PASS=false
 KEEP_ALIVE=false
+ONE_SHOT=false
 DEGRADATION_THRESHOLD=2  # abort retries if score drops N times in a row
 
 while [[ $# -gt 0 ]]; do
@@ -72,6 +73,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --keep-alive)
       KEEP_ALIVE=true
+      shift
+      ;;
+    --one-shot)
+      ONE_SHOT=true
       shift
       ;;
     --degradation-threshold)
@@ -1641,6 +1646,18 @@ run_harness_keepalive() {
 
     # Clean up for next story (sessions die naturally — new UUIDs for next story)
     rm -f "$CONTRACT_FILE" "$EVALUATION_FILE" "$CHANGES_FILE"
+
+    if [ "$ONE_SHOT" = true ]; then
+      if all_stories_pass; then
+        echo "All stories complete. (one-shot)"
+        RALPH_NORMAL_EXIT=true
+        exit 0
+      else
+        echo "One story done. Exit for next invocation. (one-shot)"
+        RALPH_NORMAL_EXIT=true
+        exit 1
+      fi
+    fi
   done
 }
 
@@ -2051,6 +2068,18 @@ run_harness_mode() {
 
     # Clean up for next story
     rm -f "$CONTRACT_FILE" "$EVALUATION_FILE" "$CHANGES_FILE"
+
+    if [ "$ONE_SHOT" = true ]; then
+      if all_stories_pass; then
+        echo "All stories complete. (one-shot)"
+        RALPH_NORMAL_EXIT=true
+        exit 0
+      else
+        echo "One story done. Exit for next invocation. (one-shot)"
+        RALPH_NORMAL_EXIT=true
+        exit 1
+      fi
+    fi
   done
 
   # Max iterations reached without completing
