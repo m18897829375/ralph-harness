@@ -183,6 +183,7 @@ trap 'cleanup SIGINT' SIGINT
 trap 'cleanup SIGTERM' SIGTERM
 
 cleanup() {
+  set +e  # 清理期间不因单条命令失败而触发 set -e 退出
   local signal="$1"
 
   echo ""
@@ -217,7 +218,7 @@ kill_claude_subprocesses() {
 
   # 备用：jobs 清理
   local child_pids
-  child_pids=$(jobs -p 2>/dev/null)
+  child_pids=$(jobs -p 2>/dev/null) || true
   if [ -n "$child_pids" ]; then
     kill $child_pids 2>/dev/null
     sleep 1
@@ -231,7 +232,7 @@ save_interrupt_state() {
   local current_story="unknown"
 
   if [ -f "$PRD_FILE" ]; then
-    current_story=$(jq -r '[.userStories[] | select(.passes == false)] | first.id // "all-done"' "$PRD_FILE" 2>/dev/null)
+    current_story=$(jq -r '[.userStories[] | select(.passes == false)] | first.id // "all-done"' "$PRD_FILE" 2>/dev/null) || true
   fi
 
   jq -n \
