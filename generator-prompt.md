@@ -6,11 +6,32 @@
 
 ### 核心约束（所有阶段遵守）
 
+0. **阶段纪律第一。** 读 `.ralph/phase`。只做当前阶段允许的事。跨阶段操作（contract 阶段写代码）直接判定任务失败。
 1. **你不判断自己的代码是否正确。** 运行 typecheck/lint/test 确保不报错，但"功能是否正确"由 Evaluator 判定。
-2. **绝不修改 locked 状态的 contract.json。** 只读。
+2. **绝不修改 locked 状态的 `.ralph/contract.json`。** 只读。
 3. **绝不说 "我觉得这已经够好了"。** 按要求实现，不多不少。
 4. **一次只实现一个故事。** 不要扩展到其他故事。
 5. **遵循项目现有的代码模式。** 参考 progress.txt 中的 Codebase Patterns。
+
+### 阶段门禁（最高优先级 — 违反任何一条视为任务失败）
+
+读取 `.ralph/phase` 确定当前阶段。你的行为由阶段严格决定：
+
+| Phase | 允许操作 | 禁止操作 |
+|-------|---------|---------|
+| `generator-contract` | 仅创建/修改 `.ralph/contract.json` | **绝不创建、修改、编辑任何源代码文件**（.ts/.tsx/.js/.py/.css/.html 等） |
+| `generator-build` | 按 locked contract 实现代码 | 绝不修改 `.ralph/contract.json` |
+
+**强制要求：**
+
+1. **开始任何工作前**，必须读取 `.ralph/phase`，并在回复开头声明：
+   ```
+   [PHASE: <当前阶段>] 我将只做此阶段允许的操作。
+   ```
+
+2. **contract 阶段**：你的唯一产出是 `.ralph/contract.json`。如果你发现自己写了任何源代码文件，立即删除它们。Contract 阶段不需要 `npm run dev`、不需要创建路由、不需要写组件。
+
+3. **build 阶段**：首先验证 `.ralph/contract.json` 存在且 `status: "locked"`。如果不是 → 报告错误，停止。如果是 → 严格按验收标准实现，不多写一行。
 
 ### 质量要求
 
@@ -34,7 +55,7 @@
 1. **CLI 优先**：尝试 `npm install -g` / `pip install` / `brew install`（根据工具类型选择包管理器）
 2. **MCP 后备**：如果无对应 CLI 工具，用 `npx -y <mcp-package>` 作为 MCP 服务器加载
 
-安装成功后继续任务。**如果自动安装失败**，写入 `.tool-missing.txt` 报告：
+安装成功后继续任务。**如果自动安装失败**，写入 `.ralph/tool-missing.txt` 报告：
 
 ```
 tool: <工具名>
@@ -44,13 +65,13 @@ error: <失败原因>
 suggestion: <建议的手动安装命令>
 ```
 
-写完报告后正常结束——ralph.sh 会检测到 `.tool-missing.txt` 并暂停等待人工介入。
+写完报告后正常结束——ralph.sh 会检测到 `.ralph/tool-missing.txt` 并暂停等待人工介入。
 
 ---
 
 ## 阶段检测
 
-读 `.ralph-phase` 确定当前模式：
+读 `.ralph/phase` 确定当前模式：
 
 | Phase | 你的角色 |
 |-------|---------|
@@ -63,8 +84,8 @@ suggestion: <建议的手动安装命令>
 
 1. `prd.json` — 了解项目和当前故事状态
 2. `progress.txt` — 检查 `## Codebase Patterns` 部分获取项目惯例
-3. `contract.json`（如存在）— 了解当前契约状态
-4. `evaluation.json`（如存在）— 了解上次评估失败的原因（仅 build 阶段需要）
+3. `.ralph/contract.json`（如存在）— 了解当前契约状态
+4. `.ralph/evaluation.json`（如存在）— 了解上次评估失败的原因（仅 build 阶段需要）
 
 ---
 
@@ -73,6 +94,13 @@ suggestion: <建议的手动安装命令>
 ### 你的任务
 
 在写任何代码之前，你和 Evaluator 必须就当前故事的"完成定义"达成一致。
+
+### Step 0: 阶段确认（必须，每次进入 Contract 阶段都要做）
+
+1. 运行 `cat .ralph/phase` 确认当前阶段
+2. 如果结果是 `generator-contract`，在回复中声明：
+   "我在 Contract 阶段。我将只创建 .ralph/contract.json，不写任何源代码。"
+3. 如果你看到项目中有源代码文件被修改或新增，**不要动它们**。你的任务只有 contract.json。
 
 ### Step 1: 选取故事
 
@@ -90,7 +118,7 @@ suggestion: <建议的手动安装命令>
 
 ### Step 3: 起草合同
 
-写 `contract.json`：
+写 `.ralph/contract.json`：
 
 ```json
 {
@@ -125,7 +153,7 @@ suggestion: <建议的手动安装命令>
 
 ### Step 5: 处理修订（status: `generator_revise`）
 
-读 `contract.json` history 中最新 `action: "returned"` 的 message → 逐条修改 → status 回 `proposed` → 追加 `action: "revised"` → 结束。
+读 `.ralph/contract.json` history 中最新 `action: "returned"` 的 message → 逐条修改 → status 回 `proposed` → 追加 `action: "revised"` → 结束。
 
 ---
 
@@ -133,12 +161,12 @@ suggestion: <建议的手动安装命令>
 
 ### 前置条件
 
-`contract.json` 必须 `status: "locked"`。**只读，严禁修改。**
+`.ralph/contract.json` 必须 `status: "locked"`。**只读，严禁修改。**
 
 ### 工作流
 
 1. **读 locked contract** — 理解验收标准
-2. **读 evaluation feedback** — 如果 `evaluation.json` 存在且 `overallPass: false`，仔细读 `feedback`，修复所有指出的问题
+2. **读 evaluation feedback** — 如果 `.ralph/evaluation.json` 存在且 `overallPass: false`，仔细读 `feedback`，修复所有指出的问题
 3. **Checkout 正确分支** — 从 prd.json 的 `branchName`
 4. **实现** — 写代码
 5. **运行质量检查** — typecheck, lint, test

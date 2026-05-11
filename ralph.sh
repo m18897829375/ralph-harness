@@ -101,17 +101,27 @@ fi
 # ============================================================
 # Paths
 # ============================================================
+# SCRIPT_DIR: where Ralph's own files live (generator-prompt.md, evaluator-prompt.md, etc.)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PRD_FILE="$SCRIPT_DIR/prd.json"
-PROGRESS_FILE="$SCRIPT_DIR/progress.txt"
-CONTRACT_FILE="$SCRIPT_DIR/contract.json"
-EVALUATION_FILE="$SCRIPT_DIR/evaluation.json"
-PHASE_FILE="$SCRIPT_DIR/.ralph-phase"
-ARCHIVE_DIR="$SCRIPT_DIR/archive"
-LAST_BRANCH_FILE="$SCRIPT_DIR/.last-branch"
+# PROJECT_DIR: the user's project root (where prd.json and progress.txt live)
+# Defaults to current working directory — works for both standalone and submodule usage.
+# Override with RALPH_PROJECT_DIR env var if needed.
+PROJECT_DIR="${RALPH_PROJECT_DIR:-$(pwd)}"
+RALPH_DIR="$PROJECT_DIR/.ralph"
+PRD_FILE="$PROJECT_DIR/prd.json"
+PROGRESS_FILE="$PROJECT_DIR/progress.txt"
+CONTRACT_FILE="$RALPH_DIR/contract.json"
+EVALUATION_FILE="$RALPH_DIR/evaluation.json"
+PHASE_FILE="$RALPH_DIR/phase"
+ARCHIVE_DIR="$PROJECT_DIR/archive"
+LAST_BRANCH_FILE="$RALPH_DIR/last-branch"
+CHANGES_FILE="$RALPH_DIR/changes-summary.txt"
 GENERATOR_PROMPT="$SCRIPT_DIR/generator-prompt.md"
 EVALUATOR_PROMPT="$SCRIPT_DIR/evaluator-prompt.md"
 LEGACY_PROMPT="$SCRIPT_DIR/CLAUDE.md"
+
+# Ensure runtime directory exists
+mkdir -p "$RALPH_DIR"
 
 # ============================================================
 # Archive previous run if branch changed
@@ -159,19 +169,340 @@ if [ ! -f "$PROGRESS_FILE" ]; then
 fi
 
 # ============================================================
+# Signal handling & cleanup
+# ============================================================
+RALPH_NORMAL_EXIT=false
+# 清理上次 crash 遗留的 PID 文件
+rm -f "${RALPH_DIR}/agent-pid.txt"
+
+trap 'cleanup SIGINT' SIGINT
+trap 'cleanup SIGTERM' SIGTERM
+
+cleanup() {
+  local signal="$1"
+
+  echo ""
+  echo "==============================================================="
+  echo "  Interrupted ($signal). Cleaning up..."
+  echo "==============================================================="
+
+  kill_claude_subprocesses
+  save_interrupt_state
+
+  echo "  Ralph stopped."
+  echo "==============================================================="
+
+  exit 130
+}
+
+kill_claude_subprocesses() {
+  echo "  Terminating subprocesses..."
+
+  # 精准杀死 ralph 记录的 agent PID（不改动其他 Claude Code 窗口）
+  if [ -f "${RALPH_DIR}/agent-pid.txt" ]; then
+    local pid
+    pid=$(cat "${RALPH_DIR}/agent-pid.txt")
+    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+      kill "$pid" 2>/dev/null
+      sleep 0.5
+      kill -9 "$pid" 2>/dev/null
+      echo "  Terminated agent PID: $pid"
+    fi
+    rm -f "${RALPH_DIR}/agent-pid.txt"
+  fi
+
+  # 备用：jobs 清理
+  local child_pids
+  child_pids=$(jobs -p 2>/dev/null)
+  if [ -n "$child_pids" ]; then
+    kill $child_pids 2>/dev/null
+    sleep 1
+    kill -9 $child_pids 2>/dev/null
+    echo "  Terminated child jobs: $child_pids"
+  fi
+}
+
+save_interrupt_state() {
+  local state_file="${RALPH_DIR}/interrupt-state.json"
+  local current_story="unknown"
+
+  if [ -f "$PRD_FILE" ]; then
+    current_story=$(jq -r '[.userStories[] | select(.passes == false)] | first.id // "all-done"' "$PRD_FILE" 2>/dev/null)
+  fi
+
+  jq -n \
+    --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+    --arg story "$current_story" \
+    --arg mode "$MODE" \
+    --argjson contract "$([ -f "$CONTRACT_FILE" ] && echo true || echo false)" \
+    --argjson eval "$([ -f "$EVALUATION_FILE" ] && echo true || echo false)" \
+    '{
+      timestamp: $ts,
+      lastStory: $story,
+      mode: $mode,
+      contractFileExists: $contract,
+      evaluationFileExists: $eval
+    }' > "$state_file"
+
+  echo "  State saved to $state_file"
+}
+
+# ============================================================
+# Contract failure — save state and exit for user resolution
+# ============================================================
+write_contract_failure_summary() {
+  local story_id="$1"
+  local story_title="$2"
+  local summary_file="${RALPH_DIR}/contract-failure-summary.md"
+
+  cat > "$summary_file" << SUMMARYEOF
+# Contract Negotiation Failure
+
+## Story
+- **ID:** $story_id
+- **Title:** $story_title
+
+## Round History
+$(if [ -f "${RALPH_DIR}/contract-scores.txt" ]; then
+    echo "| Round | Score | Contract File |"
+    echo "|-------|-------|---------------|"
+    while read -r round score; do
+      echo "| $round | $score/100 | contract-round-${round}.json |"
+    done < "${RALPH_DIR}/contract-scores.txt"
+  else
+    echo "No contract rounds were recorded (Generator may have crashed)."
+  fi)
+
+## Last Contract State
+\`\`\`json
+$(cat "$CONTRACT_FILE" 2>/dev/null | jq '.' 2>/dev/null || echo "No contract.json exists")
+\`\`\`
+
+## PRD Context
+- **Story passes:** $(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .passes' "$PRD_FILE")
+- **Story retries:** $(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .retryCount // 0' "$PRD_FILE")
+- **Acceptance criteria:**
+$(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .acceptanceCriteria[]? | "- \(.)"' "$PRD_FILE")
+
+## What You Need to Decide
+
+Please discuss in plan mode and produce a resolution covering:
+
+1. **Which contract to use?** (pick a specific round, or describe a new contract)
+2. **What should change?** (scope, acceptance criteria, verification steps)
+3. **Why will this work?** (address why previous rounds failed)
+
+Save the final resolution to \`.ralph/user-resolution.md\`.
+SUMMARYEOF
+
+  echo "  Contract failure summary saved to $summary_file"
+}
+
+exit_for_user_resolution() {
+  local story_id="$1"
+  local story_title="$2"
+
+  write_contract_failure_summary "$story_id" "$story_title"
+
+  echo ""
+  echo "==============================================================="
+  echo "  CONTRACT NEGOTIATION FAILED"
+  echo "==============================================================="
+  echo "  Story: $story_id - $story_title"
+  echo ""
+  echo "  All rounds of contract negotiation have been exhausted."
+  echo "  A summary has been saved to:"
+  echo "    ${RALPH_DIR}/contract-failure-summary.md"
+  echo ""
+  echo "  Next step: Enter plan mode in this Claude Code session"
+  echo "  and discuss a resolution. Save the agreed plan to:"
+  echo "    ${RALPH_DIR}/user-resolution.md"
+  echo ""
+  echo "  Then re-run ralph.sh to continue."
+  echo "==============================================================="
+
+  RALPH_NORMAL_EXIT=true
+  exit 0
+}
+
+write_evaluator_feedback() {
+  local story_id="$1"
+  local feedback_file="${RALPH_DIR}/evaluator-feedback.md"
+
+  cat > "$feedback_file" << FBEOF
+# Evaluator Feedback on User Resolution
+
+## Story: $story_id
+
+$(if [ -f "$CONTRACT_FILE" ]; then
+    echo "## Evaluator's Response"
+    jq -r '.history[-1].message // "No specific feedback"' "$CONTRACT_FILE"
+    echo ""
+    echo "## Current Contract Status"
+    jq -r '.status' "$CONTRACT_FILE"
+  else
+    echo "Evaluator did not modify contract.json"
+  fi)
+
+## Next Steps
+
+Please enter plan mode, discuss the feedback above, and revise the resolution.
+Save the updated plan to \`.ralph/user-resolution.md\` and re-run ralph.sh.
+FBEOF
+
+  echo "  Evaluator feedback saved to $feedback_file"
+}
+
+run_evaluator_user_resolution() {
+  local story_id="$1"
+  local mode="$2"
+
+  set_phase "evaluator-user-resolution"
+
+  local prompt="Current phase: evaluator-user-resolution (see evaluator-prompt.md Phase 1.5).
+
+The contract negotiation for story '$story_id' failed to reach agreement.
+A human user and Claude Code have discussed the situation in plan mode
+and produced the following resolution. Your job is to formally review it.
+
+## User Resolution
+$(cat "${RALPH_DIR}/user-resolution.md")
+
+## Contract Round History
+$(cat "${RALPH_DIR}/contract-scores.txt" 2>/dev/null || echo "No rounds recorded")
+
+## Current Contract State
+$(cat "$CONTRACT_FILE" 2>/dev/null | jq '.' 2>/dev/null || echo "No contract.json exists")
+
+## Instructions
+- If the resolution is sound → lock contract.json (status: locked, evaluatorSignature: user-resolution-approved)
+- If the resolution has issues → write specific feedback in contract.json history (action: user-resolution-returned)
+- Do NOT add new requirements beyond the original story scope."
+
+  echo "$prompt" > "${RALPH_DIR}/user-resolution-prompt.md"
+
+  if [[ "$mode" == "keep-alive" ]]; then
+    run_agent_keepalive "$eval_session_id" "user-resolution-eval-${story_id}" \
+      "$(cat "${RALPH_DIR}/user-resolution-prompt.md")"
+  else
+    run_agent "${RALPH_DIR}/user-resolution-prompt.md" "user-resolution-eval-${story_id}"
+  fi
+
+  if [ -f "$CONTRACT_FILE" ]; then
+    local status
+    status=$(jq -r '.status' "$CONTRACT_FILE")
+    [ "$status" = "locked" ] && return 0
+  fi
+  return 1
+}
+
+# ============================================================
+# Phase discipline verification functions
+# ============================================================
+
+# Check Generator's output after contract phase — must create contract.json, never write source code
+verify_contract_phase_output() {
+  if [ ! -f "$CONTRACT_FILE" ]; then
+    echo "  ERROR: Generator did not create contract.json"
+
+    # Check if Generator violated phase discipline by writing source code
+    if git rev-parse --git-dir >/dev/null 2>&1; then
+      local changed_files
+      changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | head -5)
+      if [ -n "$changed_files" ]; then
+        echo ""
+        echo "==============================================================="
+        echo "  PHASE VIOLATION DETECTED"
+        echo "==============================================================="
+        echo "  Generator skipped the contract phase and wrote code directly:"
+        echo "$changed_files" | sed 's/^/    /'
+        echo ""
+        echo "  This is a phase discipline violation."
+        echo "  The Generator must create .ralph/contract.json FIRST."
+        echo ""
+        echo "  Actions:"
+        echo "    1. Revert these files: git checkout -- <files>"
+        echo "    2. Re-run ralph.sh to retry contract negotiation"
+        echo "==============================================================="
+        return 1
+      fi
+    fi
+
+    return 1
+  fi
+  return 0
+}
+
+# Check Evaluator's output after contract review — must preserve contract.json, never write source code
+verify_evaluator_contract_output() {
+  if [ ! -f "$CONTRACT_FILE" ]; then
+    echo "  ERROR: Evaluator removed or did not preserve contract.json"
+    return 1
+  fi
+
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    local changed_files
+    changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | head -5)
+    if [ -n "$changed_files" ]; then
+      echo ""
+      echo "==============================================================="
+      echo "  EVALUATOR PHASE VIOLATION"
+      echo "==============================================================="
+      echo "  Evaluator modified source files during contract review:"
+      echo "$changed_files" | sed 's/^/    /'
+      echo ""
+      echo "  Evaluator must only review contract.json, never modify code."
+      echo "  Reverting these changes..."
+      git checkout -- $changed_files 2>/dev/null
+      echo "==============================================================="
+    fi
+  fi
+  return 0
+}
+
+# Check Evaluator's output after evaluation — must create evaluation.json, never write source code
+verify_evaluator_evaluate_output() {
+  if [ ! -f "$EVALUATION_FILE" ]; then
+    echo "  WARNING: Evaluator did not create evaluation.json"
+  fi
+
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    local changed_files
+    changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | head -5)
+    if [ -n "$changed_files" ]; then
+      echo ""
+      echo "==============================================================="
+      echo "  EVALUATOR PHASE VIOLATION"
+      echo "==============================================================="
+      echo "  Evaluator modified source files during evaluation:"
+      echo "$changed_files" | sed 's/^/    /'
+      echo ""
+      echo "  Evaluator must ONLY evaluate, never modify code."
+      echo "  Reverting these changes..."
+      git checkout -- $changed_files 2>/dev/null
+      echo "==============================================================="
+    fi
+  fi
+  return 0
+}
+
+# ============================================================
 # Helper: Run an AI instance with a given prompt file
 # ============================================================
 run_agent() {
   local prompt_file="$1"
   local phase_label="$2"
-  local output
 
   cost_track_start "$phase_label"
 
   if [[ "$TOOL" == "amp" ]]; then
-    output=$(cat "$prompt_file" | amp --dangerously-allow-all 2>&1 | tee /dev/stderr) || true
+    cat "$prompt_file" | amp --dangerously-allow-all 2>&1 || true
   else
-    output=$(claude --dangerously-skip-permissions --print < "$prompt_file" 2>&1 | tee /dev/stderr) || true
+    cat "$prompt_file" | claude --dangerously-skip-permissions --print 2>&1 || true &
+    local agent_pid=$!
+    echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
+    wait $agent_pid
+    rm -f "${RALPH_DIR}/agent-pid.txt"
   fi
 
   cost_track_end "$phase_label"
@@ -191,8 +522,6 @@ run_agent() {
     rm -f "$TOOL_MISSING_FILE"
     echo "  Resuming after manual tool install..."
   fi
-
-  echo "$output"
 }
 
 # ============================================================
@@ -205,7 +534,7 @@ set_phase() {
 # ============================================================
 # Tool auto-install & pause mechanism
 # ============================================================
-TOOL_MISSING_FILE="$SCRIPT_DIR/.tool-missing.txt"
+TOOL_MISSING_FILE="$RALPH_DIR/tool-missing.txt"
 
 ensure_tool() {
   local name="$1"
@@ -321,16 +650,21 @@ run_agent_keepalive() {
   local session_id="$1"
   local phase_label="$2"
   local stdin_content="$3"
+  local first_call="${4:-false}"
 
   cost_track_start "$phase_label"
 
-  if [ -n "$session_id" ]; then
-    # Resume existing session — full prompt prefix is KV-cached
-    echo "$stdin_content" | claude --dangerously-skip-permissions -p --resume "$session_id" 2>&1 | tee /dev/stderr
+  if [ "$first_call" = "true" ]; then
+    # First call — create session with our known ID so --resume can find it later
+    echo "$stdin_content" | claude --dangerously-skip-permissions -p --session-id "$session_id" 2>&1 || true &
   else
-    # First call — no session to resume
-    echo "$stdin_content" | claude --dangerously-skip-permissions -p 2>&1 | tee /dev/stderr
+    # Resume existing session — full prompt prefix is KV-cached
+    echo "$stdin_content" | claude --dangerously-skip-permissions -p --resume "$session_id" 2>&1 || true &
   fi
+  local agent_pid=$!
+  echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
+  wait $agent_pid
+  rm -f "${RALPH_DIR}/agent-pid.txt"
 
   cost_track_end "$phase_label"
 
@@ -353,8 +687,8 @@ run_agent_keepalive() {
 # ============================================================
 # Cost tracking
 # ============================================================
-COST_LOG_FILE="$SCRIPT_DIR/.cost-log.txt"
-AUDIT_LOG_FILE="$SCRIPT_DIR/.audit-log.txt"
+COST_LOG_FILE="$RALPH_DIR/cost-log.txt"
+AUDIT_LOG_FILE="$RALPH_DIR/audit-log.txt"
 
 cost_track_start() {
   if [ "$TRACK_COST" = true ]; then
@@ -655,38 +989,48 @@ run_harness_single_pass() {
       continue
     fi
 
+    # Check for pending user resolution from previous failed negotiation
+    if [ -f "${RALPH_DIR}/user-resolution.md" ]; then
+      echo "  Detected user-resolution.md for $story_id — sending to Evaluator..."
+      if run_evaluator_user_resolution "$story_id" "single-pass"; then
+        echo "  Evaluator approved the resolution. Contract LOCKED."
+        rm -f "${RALPH_DIR}/user-resolution.md"
+        rm -f "${RALPH_DIR}/contract-failure-summary.md"
+        cp "$CONTRACT_FILE" "${PROJECT_DIR}/.contract-${story_id}.json"
+        continue
+      else
+        echo "  Evaluator rejected the user resolution."
+        write_evaluator_feedback "$story_id"
+        exit_for_user_resolution "$story_id" "$story_title"
+      fi
+    fi
+
     echo ""
     echo "  Contract: $story_id - $story_title"
 
     rm -f "$CONTRACT_FILE"
-    rm -f "${SCRIPT_DIR}/.contract-round-"*.json
-    rm -f "${SCRIPT_DIR}/.contract-scores.txt"
+    rm -f "${RALPH_DIR}/contract-round-"*.json
+    rm -f "${RALPH_DIR}/contract-scores.txt"
 
-    local contract_locked=false
+    local contract_locked="${contract_locked:-false}"
 
     for round in $(seq 1 $MAX_CONTRACT_ROUNDS); do
       echo "    Round $round/$MAX_CONTRACT_ROUNDS"
 
       set_phase "generator-contract"
-      run_agent "$GENERATOR_PROMPT" "sp-contract-${round}-gen-${story_id}" > /dev/null
+      run_agent "$GENERATOR_PROMPT" "sp-contract-${round}-gen-${story_id}"
 
-      if [ ! -f "$CONTRACT_FILE" ]; then
-        echo "    ERROR: Generator did not create contract.json"
-        break
-      fi
+      verify_contract_phase_output || break
 
       set_phase "evaluator-contract"
-      run_agent "$EVALUATOR_PROMPT" "sp-contract-${round}-eval-${story_id}" > /dev/null
+      run_agent "$EVALUATOR_PROMPT" "sp-contract-${round}-eval-${story_id}"
 
-      if [ ! -f "$CONTRACT_FILE" ]; then
-        echo "    ERROR: Evaluator removed contract.json"
-        break
-      fi
+      verify_evaluator_contract_output
 
       local round_score
       round_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
-      cp "$CONTRACT_FILE" "${SCRIPT_DIR}/.contract-round-${round}.json"
-      echo "$round $round_score" >> "${SCRIPT_DIR}/.contract-scores.txt"
+      cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${round}.json"
+      echo "$round $round_score" >> "${RALPH_DIR}/contract-scores.txt"
 
       local contract_status
       contract_status=$(get_contract_status)
@@ -706,37 +1050,12 @@ run_harness_single_pass() {
       esac
     done
 
-    # Best-of-N fallback for contract
     if [ "$contract_locked" = false ]; then
-      local best_round
-      best_round=$(cat "${SCRIPT_DIR}/.contract-scores.txt" | sort -k2 -nr | head -1 | awk '{print $1}')
-      if [ -n "$best_round" ] && [ -f "${SCRIPT_DIR}/.contract-round-${best_round}.json" ]; then
-        local best_score
-        best_score=$(cat "${SCRIPT_DIR}/.contract-scores.txt" | sort -k2 -nr | head -1 | awk '{print $2}')
-        echo "    Best-of-N: selecting round $best_round (score: $best_score)"
-        cp "${SCRIPT_DIR}/.contract-round-${best_round}.json" "$CONTRACT_FILE"
-        local tmp_file="${CONTRACT_FILE}.tmp"
-        jq --arg when "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-           --arg msg "BEST-OF-N single-pass: 选择第${best_round}轮合同（评分${best_score}/100）" \
-           '.status = "locked" | .lockedAt = $when | .evaluatorSignature = "best-of-n-single-pass" |
-            .history += [{"timestamp": $when, "actor": "ralph.sh", "action": "best-of-n-locked", "message": $msg}]' \
-           "$CONTRACT_FILE" > "$tmp_file"
-        mv "$tmp_file" "$CONTRACT_FILE"
-        contract_locked=true
-      fi
+      exit_for_user_resolution "$story_id" "$story_title"
     fi
 
     # Save locked contract for this story
-    if [ "$contract_locked" = true ]; then
-      cp "$CONTRACT_FILE" "${SCRIPT_DIR}/.contract-${story_id}.json"
-    else
-      echo "    WARNING: No contract for $story_id. Marking for manual review."
-      local tmp_file="${PRD_FILE}.tmp"
-      jq --arg id "$story_id" \
-        '(.userStories[] | select(.id == $id) | .notes) |= "CONTRACT FAILED in single-pass: no agreement reached"' \
-        "$PRD_FILE" > "$tmp_file"
-      mv "$tmp_file" "$PRD_FILE"
-    fi
+    cp "$CONTRACT_FILE" "${PROJECT_DIR}/.contract-${story_id}.json"
   done
 
   # Phase 2: Build all stories (no evaluation between)
@@ -753,18 +1072,18 @@ run_harness_single_pass() {
       continue
     fi
 
-    if [ ! -f "${SCRIPT_DIR}/.contract-${story_id}.json" ]; then
+    if [ ! -f "${PROJECT_DIR}/.contract-${story_id}.json" ]; then
       echo "  $story_id has no contract. Skipping build."
       continue
     fi
 
     # Restore this story's contract
-    cp "${SCRIPT_DIR}/.contract-${story_id}.json" "$CONTRACT_FILE"
+    cp "${PROJECT_DIR}/.contract-${story_id}.json" "$CONTRACT_FILE"
 
     echo ""
     echo "  Building: $story_id - $story_title"
     set_phase "generator-build"
-    run_agent "$GENERATOR_PROMPT" "sp-build-${story_id}" > /dev/null
+    run_agent "$GENERATOR_PROMPT" "sp-build-${story_id}"
 
     audit_log "single-pass-build|${story_id}|done"
   done
@@ -775,7 +1094,7 @@ run_harness_single_pass() {
 
   # Write a combined contract for the evaluator
   echo "  Generating comprehensive evaluation contract..."
-  local combined_contract="${SCRIPT_DIR}/.combined-contract.json"
+  local combined_contract="${RALPH_DIR}/combined-contract.json"
   jq -n --arg project "$(jq -r '.project' "$PRD_FILE")" \
     '{
       storyId: "ALL",
@@ -792,7 +1111,7 @@ run_harness_single_pass() {
   cp "$combined_contract" "$CONTRACT_FILE"
 
   set_phase "evaluator-evaluate"
-  run_agent "$EVALUATOR_PROMPT" "sp-final-evaluation" > /dev/null
+  run_agent "$EVALUATOR_PROMPT" "sp-final-evaluation"
 
   # Mark all stories as passed (single-pass trusts the comprehensive eval)
   for story_index in $(seq 0 $((story_count - 1))); do
@@ -812,9 +1131,9 @@ run_harness_single_pass() {
 
   # Cleanup
   rm -f "$combined_contract"
-  rm -f "${SCRIPT_DIR}/.contract-"*.json
-  rm -f "${SCRIPT_DIR}/.contract-round-"*.json
-  rm -f "${SCRIPT_DIR}/.contract-scores.txt"
+  rm -f "${PROJECT_DIR}/.contract-"*.json
+  rm -f "${RALPH_DIR}/contract-round-"*.json
+  rm -f "${RALPH_DIR}/contract-scores.txt"
   rm -f "$CONTRACT_FILE"
 }
 
@@ -875,6 +1194,24 @@ run_harness_keepalive() {
     echo "  Story: $story_id - $story_title (keep-alive iteration $iteration)"
     echo "==============================================================="
 
+    # Check for pending user resolution from previous failed negotiation
+    if [ -f "${RALPH_DIR}/user-resolution.md" ]; then
+      echo "  Detected user-resolution.md for $story_id — sending to Evaluator..."
+      if run_evaluator_user_resolution "$story_id" "keep-alive"; then
+        echo "  Evaluator approved the resolution. Contract LOCKED."
+        rm -f "${RALPH_DIR}/user-resolution.md"
+        rm -f "${RALPH_DIR}/contract-failure-summary.md"
+        contract_locked=true
+      else
+        echo "  Evaluator rejected the user resolution."
+        write_evaluator_feedback "$story_id"
+        exit_for_user_resolution "$story_id" "$story_title"
+      fi
+    else
+      # Normal flow: start contract negotiation
+      :
+    fi
+
     # Generate session IDs for this story
     local gen_session_id
     gen_session_id=$(gen_uuid)
@@ -891,58 +1228,55 @@ run_harness_keepalive() {
     echo "--- Contract Negotiation (keep-alive) ---"
 
     rm -f "$CONTRACT_FILE"
-    rm -f "${SCRIPT_DIR}/.contract-round-"*.json
-    rm -f "${SCRIPT_DIR}/.contract-scores.txt"
+    rm -f "${RALPH_DIR}/contract-round-"*.json
+    rm -f "${RALPH_DIR}/contract-scores.txt"
 
-    local contract_locked=false
+    local contract_locked="${contract_locked:-false}"
     local gen_session_started=false
     local eval_session_started=false
 
-    for round in $(seq 1 $MAX_CONTRACT_ROUNDS); do
-      echo ""
-      echo "  Contract Round $round of $MAX_CONTRACT_ROUNDS"
+    if [ "$contract_locked" = "true" ]; then
+      echo "  Contract already locked. Skipping negotiation."
+    else
+      for round in $(seq 1 $MAX_CONTRACT_ROUNDS); do
+        echo ""
+        echo "  Contract Round $round of $MAX_CONTRACT_ROUNDS"
 
-      # Generator contract round
-      echo "  [Generator] Drafting/revising..."
-      set_phase "generator-contract"
+        # Generator contract round
+        echo "  [Generator] Drafting/revising..."
+        set_phase "generator-contract"
 
       if [ "$gen_session_started" = false ]; then
-        # First call: full prompt to initialize session
-        run_agent_keepalive "" "ka-contract-${round}-gen-${story_id}" "$(cat "$GENERATOR_PROMPT")" > /dev/null
+        # First call: full prompt to initialize session with our known session ID
+        run_agent_keepalive "$gen_session_id" "ka-contract-${round}-gen-${story_id}" "$(cat "$GENERATOR_PROMPT")" "true"
         gen_session_started=true
       else
         # Resume: only phase instruction, full prompt is in conversation history (KV-cached!)
         run_agent_keepalive "$gen_session_id" "ka-contract-${round}-gen-${story_id}" \
-          "Current phase: generator-contract (read .ralph-phase). Round $round of contract negotiation. Revise contract.json based on Evaluator feedback if any, or draft initial contract. Set .ralph-phase to generator-contract." > /dev/null
+          "Current phase: generator-contract (read .ralph-phase). Round $round of contract negotiation. Revise contract.json based on Evaluator feedback if any, or draft initial contract. Set .ralph-phase to generator-contract."
       fi
 
-      if [ ! -f "$CONTRACT_FILE" ]; then
-        echo "  ERROR: Generator did not create contract.json"
-        break
-      fi
+      verify_contract_phase_output || break
 
       # Evaluator contract round
       echo "  [Evaluator] Reviewing..."
       set_phase "evaluator-contract"
 
       if [ "$eval_session_started" = false ]; then
-        run_agent_keepalive "" "ka-contract-${round}-eval-${story_id}" "$(cat "$EVALUATOR_PROMPT")" > /dev/null
+        run_agent_keepalive "$eval_session_id" "ka-contract-${round}-eval-${story_id}" "$(cat "$EVALUATOR_PROMPT")" "true"
         eval_session_started=true
       else
         run_agent_keepalive "$eval_session_id" "ka-contract-${round}-eval-${story_id}" \
-          "Current phase: evaluator-contract (read .ralph-phase). Round $round. Review contract.json. Score it. Approve (lock) or reject with specific feedback." > /dev/null
+          "Current phase: evaluator-contract (read .ralph-phase). Round $round. Review contract.json. Score it. Approve (lock) or reject with specific feedback."
       fi
 
-      if [ ! -f "$CONTRACT_FILE" ]; then
-        echo "  ERROR: Evaluator removed contract.json"
-        break
-      fi
+      verify_evaluator_contract_output
 
       # Save round backup
       local round_score
       round_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
-      cp "$CONTRACT_FILE" "${SCRIPT_DIR}/.contract-round-${round}.json"
-      echo "$round $round_score" >> "${SCRIPT_DIR}/.contract-scores.txt"
+      cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${round}.json"
+      echo "$round $round_score" >> "${RALPH_DIR}/contract-scores.txt"
       echo "  Score: $round_score/100"
 
       local contract_status
@@ -962,35 +1296,46 @@ run_harness_keepalive() {
           ;;
       esac
     done
+    fi
 
-    # Best-of-N fallback
-    if [ "$contract_locked" = false ]; then
-      local best_round
-      best_round=$(cat "${SCRIPT_DIR}/.contract-scores.txt" | sort -k2 -nr | head -1 | awk '{print $1}')
-      if [ -n "$best_round" ] && [ -f "${SCRIPT_DIR}/.contract-round-${best_round}.json" ]; then
-        local best_score
-        best_score=$(cat "${SCRIPT_DIR}/.contract-scores.txt" | sort -k2 -nr | head -1 | awk '{print $2}')
-        echo "  Best-of-N: round $best_round (score: $best_score)"
-        cp "${SCRIPT_DIR}/.contract-round-${best_round}.json" "$CONTRACT_FILE"
-        local tmp_file="${CONTRACT_FILE}.tmp"
-        jq --arg when "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-           --arg msg "BEST-OF-N keep-alive: 选择第${best_round}轮合同（评分${best_score}/100）" \
-           '.status = "locked" | .lockedAt = $when | .evaluatorSignature = "best-of-n-keepalive" |
-            .history += [{"timestamp": $when, "actor": "ralph.sh", "action": "best-of-n-locked", "message": $msg}]' \
-           "$CONTRACT_FILE" > "$tmp_file"
-        mv "$tmp_file" "$CONTRACT_FILE"
-        contract_locked=true
+    # BUG2 fix: if last round was rejected, give Generator one extra chance to revise
+    if [ "$contract_locked" = false ] && [ -f "$CONTRACT_FILE" ]; then
+      local last_status
+      last_status=$(get_contract_status)
+      if [ "$last_status" = "generator_revise" ]; then
+        echo ""
+        echo "  Last round was rejected. Giving Generator one extra revision chance..."
+        set_phase "generator-contract"
+        run_agent_keepalive "$gen_session_id" "ka-contract-extra-gen-${story_id}" \
+          "Current phase: generator-contract (read .ralph-phase). Extra revision round. Revise contract.json based on Evaluator's last feedback." > /dev/null
+
+        if [ -f "$CONTRACT_FILE" ]; then
+          set_phase "evaluator-contract"
+          run_agent_keepalive "$eval_session_id" "ka-contract-extra-eval-${story_id}" \
+            "Current phase: evaluator-contract (read .ralph-phase). Extra review round. Review the revised contract. Score it. Approve (lock) or reject." > /dev/null
+
+          if [ -f "$CONTRACT_FILE" ]; then
+            local extra_score
+            extra_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
+            local extra_round=$((MAX_CONTRACT_ROUNDS + 1))
+            cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${extra_round}.json"
+            echo "$extra_round $extra_score" >> "${RALPH_DIR}/contract-scores.txt"
+
+            local extra_status
+            extra_status=$(get_contract_status)
+            if [ "$extra_status" = "locked" ]; then
+              echo "  Contract LOCKED after extra round."
+              contract_locked=true
+            else
+              echo "  Extra round result: $extra_status (score: $extra_score)"
+            fi
+          fi
+        fi
       fi
     fi
 
     if [ "$contract_locked" = false ]; then
-      echo "  ERROR: No contract available. Skipping story."
-      local tmp_file="${PRD_FILE}.tmp"
-      jq --arg id "$story_id" \
-        '(.userStories[] | select(.id == $id) | .notes) |= "CONTRACT FAILED (keep-alive): no valid contract"' \
-        "$PRD_FILE" > "$tmp_file"
-      mv "$tmp_file" "$PRD_FILE"
-      continue
+      exit_for_user_resolution "$story_id" "$story_title"
     fi
 
     # ============================================================
@@ -1000,8 +1345,8 @@ run_harness_keepalive() {
     echo "--- Build & Evaluate (keep-alive) ---"
 
     rm -f "$EVALUATION_FILE"
-    rm -f "${SCRIPT_DIR}/.evaluation-retry-"*.json
-    rm -f "${SCRIPT_DIR}/.evaluation-scores.txt"
+    rm -f "${RALPH_DIR}/evaluation-retry-"*.json
+    rm -f "${RALPH_DIR}/evaluation-scores.txt"
 
     local story_passed=false
 
@@ -1011,7 +1356,7 @@ run_harness_keepalive() {
         echo "  Retry $retry of $MAX_RETRIES"
 
         # Generate changes-summary for retry
-        local changes_file="${SCRIPT_DIR}/.changes-summary.txt"
+        local changes_file="$CHANGES_FILE"
         echo "# 重试 $retry 增量摘要" > "$changes_file"
         echo "## 故事: $story_id - $story_title" >> "$changes_file"
         if [ -f "$EVALUATION_FILE" ]; then
@@ -1031,7 +1376,7 @@ run_harness_keepalive() {
       echo "  [Generator] Implementing..."
       set_phase "generator-build"
       run_agent_keepalive "$gen_session_id" "ka-build-${retry}-gen-${story_id}" \
-        "Current phase: generator-build (read .ralph-phase). Retry $retry. Implement the story against the locked contract.json. If .changes-summary.txt exists, focus on fixing failed criteria." > /dev/null
+        "Current phase: generator-build (read .ralph-phase). Retry $retry. Implement the story against the locked contract.json. If .changes-summary.txt exists, focus on fixing failed criteria."
 
       if ! verify_contract_integrity "locked"; then
         echo "  WARNING: Generator may have modified locked contract."
@@ -1039,7 +1384,7 @@ run_harness_keepalive() {
       fi
 
       # Update changes-summary with git diff
-      local changes_file="${SCRIPT_DIR}/.changes-summary.txt"
+      local changes_file="$CHANGES_FILE"
       if [ "$retry" -gt 0 ]; then
         echo "" >> "$changes_file"
         echo "## 本次改动文件（Evaluator 增量评估用）" >> "$changes_file"
@@ -1054,7 +1399,9 @@ run_harness_keepalive() {
       echo "  [Evaluator] Testing..."
       set_phase "evaluator-evaluate"
       run_agent_keepalive "$eval_session_id" "ka-build-${retry}-eval-${story_id}" \
-        "Current phase: evaluator-evaluate (read .ralph-phase). Retry $retry. Test the implementation against the locked contract. Score and write evaluation.json. If .changes-summary.txt exists, do incremental evaluation." > /dev/null
+        "Current phase: evaluator-evaluate (read .ralph-phase). Retry $retry. Test the implementation against the locked contract. Score and write evaluation.json. If .changes-summary.txt exists, do incremental evaluation."
+
+      verify_evaluator_evaluate_output
 
       if [ ! -f "$EVALUATION_FILE" ]; then
         echo "  ERROR: Evaluator did not create evaluation.json"
@@ -1066,8 +1413,8 @@ run_harness_keepalive() {
       retry_score=$(jq -r '.overallScore // 0' "$EVALUATION_FILE")
       local retry_attempt
       retry_attempt=$(jq -r '.retryAttempt // 0' "$EVALUATION_FILE")
-      cp "$EVALUATION_FILE" "${SCRIPT_DIR}/.evaluation-retry-${retry_attempt}.json"
-      echo "$retry_attempt $retry_score" >> "${SCRIPT_DIR}/.evaluation-scores.txt"
+      cp "$EVALUATION_FILE" "${RALPH_DIR}/evaluation-retry-${retry_attempt}.json"
+      echo "$retry_attempt $retry_score" >> "${RALPH_DIR}/evaluation-scores.txt"
 
       update_prd_evaluation "$story_id"
 
@@ -1079,8 +1426,8 @@ run_harness_keepalive() {
       # Degradation detection
       if [ "$retry" -ge 2 ]; then
         local prev1 prev2
-        prev1=$(grep "^$((retry - 1)) " "${SCRIPT_DIR}/.evaluation-scores.txt" | awk '{print $2}' 2>/dev/null || echo "")
-        prev2=$(grep "^$((retry - 2)) " "${SCRIPT_DIR}/.evaluation-scores.txt" | awk '{print $2}' 2>/dev/null || echo "")
+        prev1=$(grep "^$((retry - 1)) " "${RALPH_DIR}/evaluation-scores.txt" | awk '{print $2}' 2>/dev/null || echo "")
+        prev2=$(grep "^$((retry - 2)) " "${RALPH_DIR}/evaluation-scores.txt" | awk '{print $2}' 2>/dev/null || echo "")
         if [ -n "$prev1" ] && [ -n "$prev2" ] && [ -n "$retry_score" ]; then
           if [ "$retry_score" -lt "$prev1" ] && [ "$prev1" -lt "$prev2" ]; then
             echo "  DEGRADATION: $prev2 → $prev1 → $retry_score"
@@ -1106,11 +1453,11 @@ run_harness_keepalive() {
       echo ""
       echo "  All retries exhausted. Best effort..."
       local best_retry
-      best_retry=$(cat "${SCRIPT_DIR}/.evaluation-scores.txt" | sort -k2 -nr | head -1 | awk '{print $1}')
-      if [ -n "$best_retry" ] && [ -f "${SCRIPT_DIR}/.evaluation-retry-${best_retry}.json" ]; then
+      best_retry=$(cat "${RALPH_DIR}/evaluation-scores.txt" | sort -k2 -nr | head -1 | awk '{print $1}')
+      if [ -n "$best_retry" ] && [ -f "${RALPH_DIR}/evaluation-retry-${best_retry}.json" ]; then
         local best_score
-        best_score=$(cat "${SCRIPT_DIR}/.evaluation-scores.txt" | sort -k2 -nr | head -1 | awk '{print $2}')
-        cp "${SCRIPT_DIR}/.evaluation-retry-${best_retry}.json" "$EVALUATION_FILE"
+        best_score=$(cat "${RALPH_DIR}/evaluation-scores.txt" | sort -k2 -nr | head -1 | awk '{print $2}')
+        cp "${RALPH_DIR}/evaluation-retry-${best_retry}.json" "$EVALUATION_FILE"
         update_prd_evaluation "$story_id"
         local tmp_file="${PRD_FILE}.tmp"
         jq --arg id "$story_id" \
@@ -1121,6 +1468,15 @@ run_harness_keepalive() {
            "$PRD_FILE" > "$tmp_file"
         mv "$tmp_file" "$PRD_FILE"
         story_passed=true
+      else
+        # Force-skip to prevent infinite re-negotiation loop
+        local tmp_file="${PRD_FILE}.tmp"
+        jq --arg id "$story_id" \
+          '(.userStories[] | select(.id == $id) | .passes) |= true |
+           (.userStories[] | select(.id == $id) | .bestEffort) |= true |
+           (.userStories[] | select(.id == $id) | .notes) |= (if . == "" then "MANUAL REVIEW: Evaluator produced no valid evaluation" else . + " | MANUAL REVIEW: no evaluation" end)' \
+          "$PRD_FILE" > "$tmp_file"
+        mv "$tmp_file" "$PRD_FILE"
       fi
     fi
 
@@ -1133,7 +1489,7 @@ run_harness_keepalive() {
     fi
 
     # Clean up for next story (sessions die naturally — new UUIDs for next story)
-    rm -f "$CONTRACT_FILE" "$EVALUATION_FILE" "${SCRIPT_DIR}/.changes-summary.txt"
+    rm -f "$CONTRACT_FILE" "$EVALUATION_FILE" "$CHANGES_FILE"
   done
 }
 
@@ -1225,6 +1581,24 @@ run_harness_mode() {
     echo "  Story: $story_id - $story_title (Iteration $iteration)"
     echo "==============================================================="
 
+    # Check for pending user resolution from previous failed negotiation
+    if [ -f "${RALPH_DIR}/user-resolution.md" ]; then
+      echo "  Detected user-resolution.md for $story_id — sending to Evaluator..."
+      if run_evaluator_user_resolution "$story_id" "harness"; then
+        echo "  Evaluator approved the resolution. Contract LOCKED."
+        rm -f "${RALPH_DIR}/user-resolution.md"
+        rm -f "${RALPH_DIR}/contract-failure-summary.md"
+        contract_locked=true
+      else
+        echo "  Evaluator rejected the user resolution."
+        write_evaluator_feedback "$story_id"
+        exit_for_user_resolution "$story_id" "$story_title"
+      fi
+    else
+      # Normal flow: start contract negotiation
+      :
+    fi
+
     # ============================================================
     # Phase 1-2: Contract negotiation
     # ============================================================
@@ -1233,40 +1607,37 @@ run_harness_mode() {
 
     # Clean up any leftover contract from previous story
     rm -f "$CONTRACT_FILE"
-    rm -f "${SCRIPT_DIR}/.contract-round-"*.json
-    rm -f "${SCRIPT_DIR}/.contract-scores.txt"
+    rm -f "${RALPH_DIR}/contract-round-"*.json
+    rm -f "${RALPH_DIR}/contract-scores.txt"
 
-    local contract_locked=false
+    local contract_locked="${contract_locked:-false}"
 
-    for round in $(seq 1 $MAX_CONTRACT_ROUNDS); do
-      echo ""
-      echo "  Contract Round $round of $MAX_CONTRACT_ROUNDS"
+    if [ "$contract_locked" = "true" ]; then
+      echo "  Contract already locked. Skipping negotiation."
+    else
+      for round in $(seq 1 $MAX_CONTRACT_ROUNDS); do
+        echo ""
+        echo "  Contract Round $round of $MAX_CONTRACT_ROUNDS"
 
-      # Run Generator (contract mode)
-      echo "  [Generator] Drafting/revising contract..."
-      set_phase "generator-contract"
-      run_agent "$GENERATOR_PROMPT" "contract-round-${round}-generator-${story_id}" > /dev/null
+        # Run Generator (contract mode)
+        echo "  [Generator] Drafting/revising contract..."
+        set_phase "generator-contract"
+      run_agent "$GENERATOR_PROMPT" "contract-round-${round}-generator-${story_id}"
 
-      if [ ! -f "$CONTRACT_FILE" ]; then
-        echo "  ERROR: Generator did not create contract.json"
-        break
-      fi
+      verify_contract_phase_output || break
 
       # Run Evaluator (contract mode)
       echo "  [Evaluator] Reviewing and scoring contract..."
       set_phase "evaluator-contract"
-      run_agent "$EVALUATOR_PROMPT" "contract-round-${round}-evaluator-${story_id}" > /dev/null
+      run_agent "$EVALUATOR_PROMPT" "contract-round-${round}-evaluator-${story_id}"
 
-      if [ ! -f "$CONTRACT_FILE" ]; then
-        echo "  ERROR: Evaluator removed contract.json"
-        break
-      fi
+      verify_evaluator_contract_output
 
       # Save this round's contract and its score
       local round_score
       round_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
-      cp "$CONTRACT_FILE" "${SCRIPT_DIR}/.contract-round-${round}.json"
-      echo "$round $round_score" >> "${SCRIPT_DIR}/.contract-scores.txt"
+      cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${round}.json"
+      echo "$round $round_score" >> "${RALPH_DIR}/contract-scores.txt"
       echo "  Contract score: $round_score/100"
 
       local contract_status
@@ -1291,44 +1662,45 @@ run_harness_mode() {
           ;;
       esac
     done
+    fi
+
+    # BUG2 fix: if last round was rejected, give Generator one extra chance to revise
+    if [ "$contract_locked" = false ] && [ -f "$CONTRACT_FILE" ]; then
+      local last_status
+      last_status=$(get_contract_status)
+      if [ "$last_status" = "generator_revise" ]; then
+        echo ""
+        echo "  Last round was rejected. Giving Generator one extra revision chance..."
+        set_phase "generator-contract"
+        run_agent "$GENERATOR_PROMPT" "contract-extra-round-generator-${story_id}"
+
+        if [ -f "$CONTRACT_FILE" ]; then
+          set_phase "evaluator-contract"
+          run_agent "$EVALUATOR_PROMPT" "contract-extra-round-evaluator-${story_id}"
+
+          if [ -f "$CONTRACT_FILE" ]; then
+            local extra_score
+            extra_score=$(jq -r '.score // 0' "$CONTRACT_FILE")
+            local extra_round=$((MAX_CONTRACT_ROUNDS + 1))
+            cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${extra_round}.json"
+            echo "$extra_round $extra_score" >> "${RALPH_DIR}/contract-scores.txt"
+
+            local extra_status
+            extra_status=$(get_contract_status)
+            if [ "$extra_status" = "locked" ]; then
+              echo "  Contract LOCKED after extra round. Proceeding to build."
+              contract_locked=true
+            else
+              echo "  Extra round result: $extra_status (score: $extra_score)"
+            fi
+          fi
+        fi
+      fi
+    fi
 
     if [ "$contract_locked" = false ]; then
       echo ""
-      echo "Contract not locked after $MAX_CONTRACT_ROUNDS rounds. Selecting best proposal..."
-
-      # Find the round with the highest score
-      local best_round
-      best_round=$(cat "${SCRIPT_DIR}/.contract-scores.txt" | sort -k2 -nr | head -1 | awk '{print $1}')
-
-      if [ -n "$best_round" ] && [ -f "${SCRIPT_DIR}/.contract-round-${best_round}.json" ]; then
-        local best_score
-        best_score=$(cat "${SCRIPT_DIR}/.contract-scores.txt" | sort -k2 -nr | head -1 | awk '{print $2}')
-        echo "  Best contract: round $best_round (score: $best_score/100)"
-
-        # Restore best contract and force-lock it
-        cp "${SCRIPT_DIR}/.contract-round-${best_round}.json" "$CONTRACT_FILE"
-
-        local tmp_file="${CONTRACT_FILE}.tmp"
-        jq --arg when "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-           --arg msg "BEST-OF-N: ${MAX_CONTRACT_ROUNDS}轮协商未达成一致，强制选择第${best_round}轮合同（评分${best_score}/100）" \
-           '.status = "locked" |
-            .lockedAt = $when |
-            .evaluatorSignature = "best-of-n-fallback" |
-            .history += [{"timestamp": $when, "actor": "ralph.sh", "action": "best-of-n-locked", "message": $msg}]' \
-           "$CONTRACT_FILE" > "$tmp_file"
-        mv "$tmp_file" "$CONTRACT_FILE"
-
-        echo "  Contract force-locked. Proceeding to build."
-        contract_locked=true
-      else
-        echo "  ERROR: No contract backups found. Skipping story."
-        local tmp_file="${PRD_FILE}.tmp"
-        jq --arg id "$story_id" \
-          '(.userStories[] | select(.id == $id) | .notes) |= "CONTRACT FAILED: No valid contract produced in any round"' \
-          "$PRD_FILE" > "$tmp_file"
-        mv "$tmp_file" "$PRD_FILE"
-        continue
-      fi
+      exit_for_user_resolution "$story_id" "$story_title"
     fi
 
     # ============================================================
@@ -1339,8 +1711,8 @@ run_harness_mode() {
 
     # Clean up previous evaluation and backups
     rm -f "$EVALUATION_FILE"
-    rm -f "${SCRIPT_DIR}/.evaluation-retry-"*.json
-    rm -f "${SCRIPT_DIR}/.evaluation-scores.txt"
+    rm -f "${RALPH_DIR}/evaluation-retry-"*.json
+    rm -f "${RALPH_DIR}/evaluation-scores.txt"
 
     local story_passed=false
     local best_effort=false
@@ -1351,7 +1723,7 @@ run_harness_mode() {
         echo "  Retry $retry of $MAX_RETRIES for $story_id"
 
         # Generate changes-summary for retry
-        local changes_file="${SCRIPT_DIR}/.changes-summary.txt"
+        local changes_file="$CHANGES_FILE"
         echo "# 重试 $retry 增量变更摘要" > "$changes_file"
         echo "## 故事信息" >> "$changes_file"
         echo "- 故事ID: $story_id" >> "$changes_file"
@@ -1386,7 +1758,7 @@ run_harness_mode() {
       # Run Generator (build mode)
       echo "  [Generator] Implementing story..."
       set_phase "generator-build"
-      run_agent "$GENERATOR_PROMPT" "build-retry-${retry}-generator-${story_id}" > /dev/null
+      run_agent "$GENERATOR_PROMPT" "build-retry-${retry}-generator-${story_id}"
 
       # Verify contract integrity after Generator run
       if ! verify_contract_integrity "locked"; then
@@ -1400,7 +1772,7 @@ run_harness_mode() {
       fi
 
       # Update changes-summary with actual changed files
-      local changes_file="${SCRIPT_DIR}/.changes-summary.txt"
+      local changes_file="$CHANGES_FILE"
       if [ "$retry" -gt 0 ]; then
         echo "" >> "$changes_file"
         echo "## 本次重试实际改动的文件（用于 Evaluator 增量评估）" >> "$changes_file"
@@ -1416,7 +1788,9 @@ run_harness_mode() {
       # Run Evaluator (evaluate mode)
       echo "  [Evaluator] Testing and scoring..."
       set_phase "evaluator-evaluate"
-      run_agent "$EVALUATOR_PROMPT" "build-retry-${retry}-evaluator-${story_id}" > /dev/null
+      run_agent "$EVALUATOR_PROMPT" "build-retry-${retry}-evaluator-${story_id}"
+
+      verify_evaluator_evaluate_output
 
       # Check evaluation results
       if [ ! -f "$EVALUATION_FILE" ]; then
@@ -1429,8 +1803,8 @@ run_harness_mode() {
       retry_score=$(jq -r '.overallScore // 0' "$EVALUATION_FILE")
       local retry_attempt
       retry_attempt=$(jq -r '.retryAttempt // 0' "$EVALUATION_FILE")
-      cp "$EVALUATION_FILE" "${SCRIPT_DIR}/.evaluation-retry-${retry_attempt}.json"
-      echo "$retry_attempt $retry_score" >> "${SCRIPT_DIR}/.evaluation-scores.txt"
+      cp "$EVALUATION_FILE" "${RALPH_DIR}/evaluation-retry-${retry_attempt}.json"
+      echo "$retry_attempt $retry_score" >> "${RALPH_DIR}/evaluation-scores.txt"
 
       # Update prd.json with evaluation data
       update_prd_evaluation "$story_id"
@@ -1443,8 +1817,8 @@ run_harness_mode() {
       # Degradation detection: abort if scores are trending down
       if [ "$retry" -ge 2 ]; then
         local prev1 prev2
-        prev1=$(grep "^$((retry - 1)) " "${SCRIPT_DIR}/.evaluation-scores.txt" | awk '{print $2}' 2>/dev/null || echo "")
-        prev2=$(grep "^$((retry - 2)) " "${SCRIPT_DIR}/.evaluation-scores.txt" | awk '{print $2}' 2>/dev/null || echo "")
+        prev1=$(grep "^$((retry - 1)) " "${RALPH_DIR}/evaluation-scores.txt" | awk '{print $2}' 2>/dev/null || echo "")
+        prev2=$(grep "^$((retry - 2)) " "${RALPH_DIR}/evaluation-scores.txt" | awk '{print $2}' 2>/dev/null || echo "")
         if [ -n "$prev1" ] && [ -n "$prev2" ] && [ -n "$retry_score" ]; then
           if [ "$retry_score" -lt "$prev1" ] && [ "$prev1" -lt "$prev2" ]; then
             echo "  DEGRADATION DETECTED: Scores trending down ($prev2 → $prev1 → $retry_score)"
@@ -1474,15 +1848,15 @@ run_harness_mode() {
 
       # Find the retry with the highest score
       local best_retry
-      best_retry=$(cat "${SCRIPT_DIR}/.evaluation-scores.txt" | sort -k2 -nr | head -1 | awk '{print $1}')
+      best_retry=$(cat "${RALPH_DIR}/evaluation-scores.txt" | sort -k2 -nr | head -1 | awk '{print $1}')
 
-      if [ -n "$best_retry" ] && [ -f "${SCRIPT_DIR}/.evaluation-retry-${best_retry}.json" ]; then
+      if [ -n "$best_retry" ] && [ -f "${RALPH_DIR}/evaluation-retry-${best_retry}.json" ]; then
         local best_score
-        best_score=$(cat "${SCRIPT_DIR}/.evaluation-scores.txt" | sort -k2 -nr | head -1 | awk '{print $2}')
+        best_score=$(cat "${RALPH_DIR}/evaluation-scores.txt" | sort -k2 -nr | head -1 | awk '{print $2}')
         echo "  Best result: retry $best_retry (score: $best_score/100)"
 
         # Restore best evaluation
-        cp "${SCRIPT_DIR}/.evaluation-retry-${best_retry}.json" "$EVALUATION_FILE"
+        cp "${RALPH_DIR}/evaluation-retry-${best_retry}.json" "$EVALUATION_FILE"
 
         # Update prd.json with best-effort pass
         update_prd_evaluation "$story_id"
@@ -1499,6 +1873,14 @@ run_harness_mode() {
         story_passed=true
       else
         echo "  ERROR: No evaluation backups found. Story failed."
+        # Force-skip to prevent infinite re-negotiation loop
+        local tmp_file="${PRD_FILE}.tmp"
+        jq --arg id "$story_id" \
+          '(.userStories[] | select(.id == $id) | .passes) |= true |
+           (.userStories[] | select(.id == $id) | .bestEffort) |= true |
+           (.userStories[] | select(.id == $id) | .notes) |= (if . == "" then "MANUAL REVIEW: Evaluator produced no valid evaluation" else . + " | MANUAL REVIEW: no evaluation" end)' \
+          "$PRD_FILE" > "$tmp_file"
+        mv "$tmp_file" "$PRD_FILE"
       fi
     fi
 
@@ -1515,7 +1897,7 @@ run_harness_mode() {
     fi
 
     # Clean up for next story
-    rm -f "$CONTRACT_FILE" "$EVALUATION_FILE" "${SCRIPT_DIR}/.changes-summary.txt"
+    rm -f "$CONTRACT_FILE" "$EVALUATION_FILE" "$CHANGES_FILE"
   done
 
   # Max iterations reached without completing

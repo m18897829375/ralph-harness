@@ -1,19 +1,7 @@
-# Ralph working files (generated during runs)
+# Ralph runtime files (generated during runs)
+.ralph/
 prd.json
 progress.txt
-.last-branch
-.ralph-phase
-contract.json
-evaluation.json
-.changes-summary.txt
-.contract-round-*.json
-.contract-scores.txt
-.evaluation-retry-*.json
-.evaluation-scores.txt
-.contract-*.json
-.cost-log.txt
-.audit-log.txt
-.tool-missing.txt
 
 # Archive is optional to commit
 # archive/
