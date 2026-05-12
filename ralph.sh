@@ -550,7 +550,17 @@ _check_agent_output() {
       fi
       ;;
     generator-build)
-      ;;  # Build phase: let process exit on its own
+      # Detect completed build: new commits since agent started = work done
+      if git rev-parse --git-dir >/dev/null 2>&1; then
+        local start_head=$(cat "${RALPH_DIR}/agent-start-head.txt" 2>/dev/null)
+        local current_head=$(git rev-parse HEAD 2>/dev/null)
+        if [ "$current_head" != "$start_head" ] && [ -n "$start_head" ] && [ "$start_head" != "none" ]; then
+          echo "  [DETECT] Generator committed code. Build complete. Proceeding..."
+          kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
+          return 0
+        fi
+      fi
+      ;;
   esac
   return 1
 }
@@ -564,7 +574,17 @@ wait_for_agent() {
   local tick=60
   local heartbeat=600
 
+  # Record current HEAD for build completion detection
+  local start_head
+  start_head=$(git rev-parse HEAD 2>/dev/null)
+  echo "${start_head:-none}" > "${RALPH_DIR}/agent-start-head.txt"
+
   while kill -0 "$pid" 2>/dev/null; do
+    # Double-check: ps is more reliable than kill -0 on MSYS2/Windows
+    if ! ps -p "$pid" >/dev/null 2>&1; then
+      echo "  [DETECT] Process $pid is dead (ps check). Proceeding..."
+      break
+    fi
     sleep $tick
     elapsed=$((elapsed + tick))
 
