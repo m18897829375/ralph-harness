@@ -8,7 +8,7 @@
     },
     "context7": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-context7"],
+      "args": ["-y", "@upstash/context7-mcp"],
       "description": "Context7 MCP server for fetching up-to-date library documentation. Used by Generator when researching best practices before drafting contracts.",
       "env": {}
     }

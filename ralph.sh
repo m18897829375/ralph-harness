@@ -808,7 +808,7 @@ run_preflight_checks() {
     "npx --yes @anthropic/mcp-playwright install 2>/dev/null || npx playwright install chromium 2>/dev/null" \
     "MCP" "browser testing (Evaluator)" || echo "  [WARN] Playwright not available — Evaluator UI testing will be degraded"
 
-  ensure_tool "Context7 MCP" "npx --yes @anthropic/mcp-context7 --help 2>/dev/null" \
+  ensure_tool "Context7 MCP" "npx --yes @upstash/context7-mcp --help 2>/dev/null" \
     "true" \
     "MCP" "documentation lookup (Generator)" || echo "  [WARN] Context7 not available — Generator will rely on WebSearch only"
 
