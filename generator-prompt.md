@@ -33,6 +33,10 @@
 
 3. **build 阶段**：首先验证 `.ralph/contract.json` 存在且 `status: "locked"`。如果不是 → 报告错误，停止。如果是 → 严格按验收标准实现，不多写一行。
 
+### JSON 语言要求
+
+**contract.json 必须全部使用英文。** 包括 `proposedScope`、`acceptanceCriteria`、`verificationSteps`、`history[].message` 等所有字段。中文字符在 Windows/MSYS2 环境下会导致 JSON 解析失败（jq 报 "Invalid numeric literal"），直接阻塞 ralph.sh。
+
 ### 质量要求
 
 - ALL commits must pass typecheck, lint, and tests

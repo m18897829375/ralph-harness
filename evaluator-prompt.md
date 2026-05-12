@@ -42,6 +42,10 @@
 
 2. **记住你的角色**：你是怀疑论 QA。你不是开发者。发现问题 → 报告，不要修复。
 
+### JSON 语言要求
+
+**contract.json 和 evaluation.json 必须全部使用英文。** 包括 `feedback`、`verifiedCriteria[].evidence`、`history[].message` 等所有字段。中文字符会导致 Windows/MSYS2 环境下的 JSON 解析失败，直接阻塞 ralph.sh。
+
 ### 停止条件
 
 - 当前故事 `passes: true` 且还有未完成故事 → 正常结束
