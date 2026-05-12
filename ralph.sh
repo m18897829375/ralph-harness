@@ -1158,7 +1158,24 @@ run_harness_single_pass() {
 
     # Check for pending user resolution from previous failed negotiation
     if [ -f "${RALPH_DIR}/user-resolution.md" ]; then
-      echo "  Detected user-resolution.md for $story_id — sending to Evaluator..."
+      echo "  Detected user-resolution.md for $story_id."
+      echo ""
+      echo "  ==============================================================="
+      echo "  USER RESOLUTION CONTENT:"
+      echo "  ---------------------------------------------------------------"
+      cat "${RALPH_DIR}/user-resolution.md"
+      echo "  ---------------------------------------------------------------"
+      echo ""
+      echo "  This resolution will be sent to the Evaluator for formal review."
+      echo "  Only proceed if you (the human user) wrote or approved this."
+      echo "  ==============================================================="
+      read -r -p "  Send to Evaluator? [y/N]: " confirm
+      if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo "  Aborted. Remove .ralph/user-resolution.md and re-run ralph.sh."
+        RALPH_NORMAL_EXIT=true
+        exit 1
+      fi
+      echo "  Confirmed. Sending to Evaluator..."
       if run_evaluator_user_resolution "$story_id" "single-pass"; then
         echo "  Evaluator approved the resolution. Contract LOCKED."
         rm -f "${RALPH_DIR}/user-resolution.md"
@@ -1365,7 +1382,24 @@ run_harness_keepalive() {
 
     # Check for pending user resolution from previous failed negotiation
     if [ -f "${RALPH_DIR}/user-resolution.md" ]; then
-      echo "  Detected user-resolution.md for $story_id — sending to Evaluator..."
+      echo "  Detected user-resolution.md for $story_id."
+      echo ""
+      echo "  ==============================================================="
+      echo "  USER RESOLUTION CONTENT:"
+      echo "  ---------------------------------------------------------------"
+      cat "${RALPH_DIR}/user-resolution.md"
+      echo "  ---------------------------------------------------------------"
+      echo ""
+      echo "  This resolution will be sent to the Evaluator for formal review."
+      echo "  Only proceed if you (the human user) wrote or approved this."
+      echo "  ==============================================================="
+      read -r -p "  Send to Evaluator? [y/N]: " confirm
+      if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo "  Aborted. Remove .ralph/user-resolution.md and re-run ralph.sh."
+        RALPH_NORMAL_EXIT=true
+        exit 1
+      fi
+      echo "  Confirmed. Sending to Evaluator..."
       if run_evaluator_user_resolution "$story_id" "keep-alive"; then
         echo "  Evaluator approved the resolution. Contract LOCKED."
         rm -f "${RALPH_DIR}/user-resolution.md"
@@ -1396,17 +1430,17 @@ run_harness_keepalive() {
     echo ""
     echo "--- Contract Negotiation (keep-alive) ---"
 
-    rm -f "$CONTRACT_FILE"
-    rm -f "${RALPH_DIR}/contract-round-"*.json
-    rm -f "${RALPH_DIR}/contract-scores.txt"
-
     local contract_locked="${contract_locked:-false}"
     local gen_session_started=false
     local eval_session_started=false
 
     if [ "$contract_locked" = "true" ]; then
-      echo "  Contract already locked. Skipping negotiation."
+      echo "  Contract already locked (user-resolution). Skipping negotiation."
     else
+      rm -f "$CONTRACT_FILE"
+      rm -f "${RALPH_DIR}/contract-round-"*.json
+      rm -f "${RALPH_DIR}/contract-scores.txt"
+
       for round in $(seq 1 $MAX_CONTRACT_ROUNDS); do
         echo ""
         echo "  Contract Round $round of $MAX_CONTRACT_ROUNDS"
@@ -1766,7 +1800,24 @@ run_harness_mode() {
 
     # Check for pending user resolution from previous failed negotiation
     if [ -f "${RALPH_DIR}/user-resolution.md" ]; then
-      echo "  Detected user-resolution.md for $story_id — sending to Evaluator..."
+      echo "  Detected user-resolution.md for $story_id."
+      echo ""
+      echo "  ==============================================================="
+      echo "  USER RESOLUTION CONTENT:"
+      echo "  ---------------------------------------------------------------"
+      cat "${RALPH_DIR}/user-resolution.md"
+      echo "  ---------------------------------------------------------------"
+      echo ""
+      echo "  This resolution will be sent to the Evaluator for formal review."
+      echo "  Only proceed if you (the human user) wrote or approved this."
+      echo "  ==============================================================="
+      read -r -p "  Send to Evaluator? [y/N]: " confirm
+      if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
+        echo "  Aborted. Remove .ralph/user-resolution.md and re-run ralph.sh."
+        RALPH_NORMAL_EXIT=true
+        exit 1
+      fi
+      echo "  Confirmed. Sending to Evaluator..."
       if run_evaluator_user_resolution "$story_id" "harness"; then
         echo "  Evaluator approved the resolution. Contract LOCKED."
         rm -f "${RALPH_DIR}/user-resolution.md"
@@ -1788,16 +1839,16 @@ run_harness_mode() {
     echo ""
     echo "--- Contract Negotiation Phase ---"
 
-    # Clean up any leftover contract from previous story
-    rm -f "$CONTRACT_FILE"
-    rm -f "${RALPH_DIR}/contract-round-"*.json
-    rm -f "${RALPH_DIR}/contract-scores.txt"
-
     local contract_locked="${contract_locked:-false}"
 
     if [ "$contract_locked" = "true" ]; then
-      echo "  Contract already locked. Skipping negotiation."
+      echo "  Contract already locked (user-resolution). Skipping negotiation."
     else
+      # Clean up any leftover contract from previous story
+      rm -f "$CONTRACT_FILE"
+      rm -f "${RALPH_DIR}/contract-round-"*.json
+      rm -f "${RALPH_DIR}/contract-scores.txt"
+
       for round in $(seq 1 $MAX_CONTRACT_ROUNDS); do
         echo ""
         echo "  Contract Round $round of $MAX_CONTRACT_ROUNDS"
