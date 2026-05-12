@@ -71,7 +71,7 @@
 
 1. **CLI 优先**：`npm install -g` / `pip install` / `brew install`
 2. **MCP 后备**：无对应 CLI 则 `npx -y <mcp-package>`
-3. **Playwright 专项**：浏览器可用但 Playwright MCP 不可用时，`npx playwright install chromium`
+3. **Playwright 专项**：Playwright 优先使用 MCP 工具（已在 .mcp.json 中配置）。如果 MCP 不可用，回退到 `npx playwright install chromium`
 
 ### 工具缺失报告格式
 
