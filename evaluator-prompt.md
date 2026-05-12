@@ -50,19 +50,34 @@
 
 ---
 
-## 运行时工具管理
+## 运行时工具管理（严格约束）
 
-评估过程中如果需要特定工具（浏览器测试/API调用/数据库查询）但缺失，**按以下优先级自行安装**：
+评估前，根据当前故事的 `acceptanceCriteria`、`verificationSteps` 和 `techStack`，判断验证需要哪些工具。
+
+### 强制规则
+
+1. **必须安装缺失工具。** 如果验收标准要求某种验证方式但你缺乏对应工具，必须按下方优先级安装。**禁止用其他方式代替。** 例如：验收标准要求浏览器测试 → 必须装 Playwright，不能用"读代码判断"代替。
+
+2. **严格按验收标准执行验证。** 要求浏览器测试 → Playwright。要求 API curl 测试 → curl/httpie。要求数据库查询验证 → 对应 CLI。**不能以类型检查或代码审查代替验收标准的验证要求。**
+
+3. **安装失败 → 写报告 → 停止。** 如果自动安装失败：
+   - 写入 `.ralph/tool-missing.txt`（格式见下方）
+   - 停止当前评估，不要继续
+   - ralph.sh 会检测到此文件并暂停等待人工介入
+
+4. **缺少工具的情况下给分 = 无效评估。** 因为验收标准未实测，评分无意义。
+
+### 安装优先级
 
 1. **CLI 优先**：`npm install -g` / `pip install` / `brew install`
 2. **MCP 后备**：无对应 CLI 则 `npx -y <mcp-package>`
 3. **Playwright 专项**：浏览器可用但 Playwright MCP 不可用时，`npx playwright install chromium`
 
-安装成功继续评估。**如果自动安装失败**，写入 `.ralph/tool-missing.txt`：
+### 工具缺失报告格式
 
 ```
 tool: <工具名>
-required_for: <评估任务 — 合同审查/浏览器验证/API测试>
+required_for: <当前故事ID> - <评估任务 — 合同审查/浏览器验证/API测试>
 install_attempted: <尝试的命令>
 error: <失败原因>
 suggestion: <建议的手动安装命令>

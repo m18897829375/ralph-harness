@@ -48,24 +48,39 @@
 
 ---
 
-## 运行时工具管理
+## 运行时工具管理（严格约束）
 
-执行任务时如果需要某个 CLI 或 MCP 工具但缺失，**按以下优先级自行安装**：
+执行任务前，根据当前故事的 `acceptanceCriteria`、`verificationSteps` 和 `techStack`，判断需要哪些工具。
 
-1. **CLI 优先**：尝试 `npm install -g` / `pip install` / `brew install`（根据工具类型选择包管理器）
+### 强制规则
+
+1. **必须安装缺失工具。** 如果当前故事需要某工具但你当前没有，必须按下方优先级安装。**禁止用其他方式代替。** 例如：验收标准要求 Playwright 浏览器测试 → 必须装 Playwright，不能用"代码审查"代替。
+
+2. **严格按故事的验收标准执行和检测。** 验收标准要求浏览器测试 → 必须用 Playwright 测。要求 API curl 测试 → 必须用 curl/httpie 测。要求数据库查询验证 → 必须用对应 CLI。不能以"代码看起来正确"或"typecheck 通过"代替。
+
+3. **安装失败 → 写报告 → 停止。** 如果自动安装失败：
+   - 写入 `.ralph/tool-missing.txt`（格式见下方）
+   - 停止当前任务，不要继续
+   - ralph.sh 会检测到此文件并暂停等待人工介入
+
+4. **不写报告直接跳过工具 = 任务失败。** Evaluator 会因为"验收标准未实测"直接扣分。
+
+### 安装优先级
+
+1. **CLI 优先**：`npm install -g` / `pip install` / `brew install`（根据工具类型选择包管理器）
 2. **MCP 后备**：如果无对应 CLI 工具，用 `npx -y <mcp-package>` 作为 MCP 服务器加载
 
-安装成功后继续任务。**如果自动安装失败**，写入 `.ralph/tool-missing.txt` 报告：
+### 工具缺失报告格式
 
 ```
 tool: <工具名>
-required_for: <正在执行的任务>
-install_attempted: <你尝试了什么命令>
+required_for: <当前故事ID> - <为什么需要此工具>
+install_attempted: <尝试过的命令>
 error: <失败原因>
-suggestion: <建议的手动安装命令>
+suggestion: <建议手动安装的命令>
 ```
 
-写完报告后正常结束——ralph.sh 会检测到 `.ralph/tool-missing.txt` 并暂停等待人工介入。
+写完报告后正常结束。ralph.sh 检测到 `.ralph/tool-missing.txt` 后暂停等待人工介入。
 
 ---
 
