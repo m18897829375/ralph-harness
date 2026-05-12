@@ -425,7 +425,7 @@ verify_contract_phase_output() {
     # Check if Generator violated phase discipline by writing source code
     if git rev-parse --git-dir >/dev/null 2>&1; then
       local changed_files
-      changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | head -5)
+      changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | head -5)
       if [ -n "$changed_files" ]; then
         echo ""
         echo "==============================================================="
@@ -459,7 +459,7 @@ verify_evaluator_contract_output() {
 
   if git rev-parse --git-dir >/dev/null 2>&1; then
     local changed_files
-    changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | head -5)
+    changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | head -5)
     if [ -n "$changed_files" ]; then
       echo ""
       echo "==============================================================="
@@ -485,7 +485,7 @@ verify_evaluator_evaluate_output() {
 
   if git rev-parse --git-dir >/dev/null 2>&1; then
     local changed_files
-    changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | head -5)
+    changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | head -5)
     if [ -n "$changed_files" ]; then
       echo ""
       echo "==============================================================="
