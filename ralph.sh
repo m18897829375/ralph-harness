@@ -1590,6 +1590,9 @@ run_harness_keepalive() {
         fi
       fi
 
+      # Delete old evaluation.json to prevent stale-score loop if Evaluator crashes
+      rm -f "$EVALUATION_FILE"
+
       if ! verify_contract_integrity "locked"; then
         echo "  Contract integrity failed. Aborting."
         break
@@ -2002,6 +2005,9 @@ run_harness_mode() {
         echo ""
         echo "  Changes summary generated for retry."
       fi
+
+      # Delete old evaluation.json to prevent stale-score loop if Evaluator crashes
+      rm -f "$EVALUATION_FILE"
 
       # Verify contract is still locked before build
       if ! verify_contract_integrity "locked"; then
