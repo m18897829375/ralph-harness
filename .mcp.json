@@ -1,15 +1,15 @@
 {
   "mcpServers": {
     "playwright": {
-      "command": "npx",
-      "args": ["-y", "@playwright/mcp@latest"],
-      "description": "Playwright MCP server for browser automation testing. Required by Ralph Evaluator to test UI features in a real browser.",
+      "type": "http",
+      "url": "http://localhost:8931/mcp",
+      "description": "Playwright MCP server for browser automation testing. HTTP transport avoids MSYS2 stdio pipe deadlock with large screenshots.",
       "env": {}
     },
     "context7": {
       "command": "npx",
       "args": ["-y", "@upstash/context7-mcp"],
-      "description": "Context7 MCP server for fetching up-to-date library documentation. Used by Generator when researching best practices before drafting contracts.",
+      "description": "Context7 MCP server — stdio is fine (text-only, small payloads).",
       "env": {}
     }
   }
