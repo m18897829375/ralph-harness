@@ -193,6 +193,7 @@ rm -f "${RALPH_DIR}/agent-pid.txt"
 
 trap 'cleanup SIGINT' SIGINT
 trap 'cleanup SIGTERM' SIGTERM
+trap 'cleanup EXIT' EXIT
 
 cleanup() {
   set +e  # 清理期间不因单条命令失败而触发 set -e 退出
@@ -200,7 +201,11 @@ cleanup() {
 
   echo ""
   echo "==============================================================="
-  echo "  Interrupted ($signal). Cleaning up..."
+  if [ "$signal" = "EXIT" ]; then
+    echo "  Ralph exiting. Final cleanup..."
+  else
+    echo "  Interrupted ($signal). Cleaning up..."
+  fi
   echo "==============================================================="
 
   kill_claude_subprocesses
@@ -209,7 +214,9 @@ cleanup() {
   echo "  Ralph stopped."
   echo "==============================================================="
 
-  exit 130
+  if [ "$signal" != "EXIT" ]; then
+    exit 130
+  fi
 }
 
 # Check if a process is alive using multiple detection methods.
@@ -238,6 +245,25 @@ _is_process_alive() {
   return 1
 }
 
+# Terminate a process and all its descendants (process tree).
+# Windows: taskkill /T does native tree termination.
+# Linux/macOS: recursively enumerate and kill children first, then parent.
+_kill_process_tree() {
+  local pid="$1"
+  [ -z "$pid" ] && return 0
+
+  if command -v tasklist >/dev/null 2>&1; then
+    taskkill /T /PID "$pid" /F 2>/dev/null
+  else
+    local children
+    children=$(ps -o pid= --ppid "$pid" 2>/dev/null)
+    for child in $children; do
+      _kill_process_tree "$child"
+    done
+    kill -9 "$pid" 2>/dev/null
+  fi
+}
+
 kill_claude_subprocesses() {
   echo "  Terminating subprocesses..."
 
@@ -246,10 +272,8 @@ kill_claude_subprocesses() {
     local pid
     pid=$(cat "${RALPH_DIR}/agent-pid.txt")
     if [ -n "$pid" ] && _is_process_alive "$pid"; then
-      kill "$pid" 2>/dev/null
-      sleep 0.5
-      kill -9 "$pid" 2>/dev/null
-      echo "  Terminated agent PID: $pid"
+      _kill_process_tree "$pid"
+      echo "  Terminated agent PID tree: $pid"
     fi
     rm -f "${RALPH_DIR}/agent-pid.txt"
   fi
@@ -258,10 +282,10 @@ kill_claude_subprocesses() {
   local child_pids
   child_pids=$(jobs -p 2>/dev/null) || true
   if [ -n "$child_pids" ]; then
-    kill $child_pids 2>/dev/null
-    sleep 1
-    kill -9 $child_pids 2>/dev/null
-    echo "  Terminated child jobs: $child_pids"
+    for cpid in $child_pids; do
+      _kill_process_tree "$cpid"
+    done
+    echo "  Terminated child jobs tree: $child_pids"
   fi
 }
 
@@ -547,7 +571,7 @@ _check_agent_output() {
         status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null)
         if [ -n "$status" ]; then
           echo "  [DETECT] contract.json ready (status: $status). Proceeding..."
-          kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
+          _kill_process_tree "$pid"
           return 0
         fi
       fi
@@ -559,7 +583,7 @@ _check_agent_output() {
         case "$status" in
           locked|generator_revise)
             echo "  [DETECT] contract.json review done (status: $status). Proceeding..."
-            kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
+            _kill_process_tree "$pid"
             return 0
             ;;
         esac
@@ -685,6 +709,7 @@ run_agent() {
     local agent_pid=$!
     echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
     wait_for_agent "$agent_pid" "$phase_label"
+    _kill_process_tree "$agent_pid" 2>/dev/null
     rm -f "${RALPH_DIR}/agent-pid.txt"
   fi
 
@@ -847,6 +872,7 @@ run_agent_keepalive() {
   local agent_pid=$!
   echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
   wait_for_agent "$agent_pid" "$phase_label"
+  _kill_process_tree "$agent_pid" 2>/dev/null
   rm -f "${RALPH_DIR}/agent-pid.txt"
 
   cost_track_end "$phase_label"
