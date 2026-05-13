@@ -2,7 +2,7 @@
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["-y", "@anthropic/mcp-playwright"],
+      "args": ["-y", "@playwright/mcp@latest"],
       "description": "Playwright MCP server for browser automation testing. Required by Ralph Evaluator to test UI features in a real browser.",
       "env": {}
     },

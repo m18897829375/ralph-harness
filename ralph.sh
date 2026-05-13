@@ -804,8 +804,8 @@ run_preflight_checks() {
     "CLI" "version control" || all_ok=false
 
   # ---- Optional tools (warn but don't block) ----
-  ensure_tool "Playwright MCP" "npx --yes @anthropic/mcp-playwright --help 2>/dev/null" \
-    "npx --yes @anthropic/mcp-playwright install 2>/dev/null || npx playwright install chromium 2>/dev/null" \
+  ensure_tool "Playwright MCP" "npx --yes @playwright/mcp@latest --help 2>/dev/null" \
+    "npx --yes @playwright/mcp@latest install 2>/dev/null || npx playwright install chromium 2>/dev/null" \
     "MCP" "browser testing (Evaluator)" || echo "  [WARN] Playwright not available — Evaluator UI testing will be degraded"
 
   ensure_tool "Context7 MCP" "npx --yes @upstash/context7-mcp --help 2>/dev/null" \
