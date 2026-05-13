@@ -212,6 +212,32 @@ cleanup() {
   exit 130
 }
 
+# Check if a process is alive using multiple detection methods.
+# On MSYS2/Windows, both kill -0 and ps -p can falsely report dead processes
+# as alive (both depend on the same /proc emulation layer).  tasklist queries
+# the Windows kernel process table directly and is the ground truth.
+# Returns 0 if the process is alive, 1 if it is dead.
+_is_process_alive() {
+  local pid="$1"
+
+  # Windows: tasklist queries the kernel directly, immune to MSYS2 /proc lag
+  if command -v tasklist >/dev/null 2>&1; then
+    if tasklist /FI "PID eq $pid" 2>/dev/null | grep -qw "$pid"; then
+      return 0
+    fi
+    return 1
+  fi
+
+  # Linux/macOS fallback
+  if ps -p "$pid" >/dev/null 2>&1; then
+    return 0
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
 kill_claude_subprocesses() {
   echo "  Terminating subprocesses..."
 
@@ -219,7 +245,7 @@ kill_claude_subprocesses() {
   if [ -f "${RALPH_DIR}/agent-pid.txt" ]; then
     local pid
     pid=$(cat "${RALPH_DIR}/agent-pid.txt")
-    if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+    if [ -n "$pid" ] && _is_process_alive "$pid"; then
       kill "$pid" 2>/dev/null
       sleep 0.5
       kill -9 "$pid" 2>/dev/null
@@ -507,24 +533,14 @@ verify_evaluator_evaluate_output() {
 # Agent wait with output detection + heartbeat
 # ============================================================
 
-# Check if agent has produced expected output for current phase
+# Check if agent has produced contract output (contract phases only).
+# Build and evaluate phases use natural exit — see wait_for_agent().
 _check_agent_output() {
   local pid="$1"
   local phase
   phase=$(cat "$PHASE_FILE" 2>/dev/null)
 
   case "$phase" in
-    evaluator-evaluate)
-      if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
-        local score
-        score=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null)
-        if [ "$score" != "-1" ] && [ "$score" != "null" ] && [ -n "$score" ]; then
-          echo "  [DETECT] evaluation.json ready (score: $score/100). Proceeding..."
-          kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
-          return 0
-        fi
-      fi
-      ;;
     generator-contract)
       if [ -f "$CONTRACT_FILE" ] && [ -s "$CONTRACT_FILE" ]; then
         local status
@@ -549,23 +565,13 @@ _check_agent_output() {
         esac
       fi
       ;;
-    generator-build)
-      # Detect completed build: new commits since agent started = work done
-      if git rev-parse --git-dir >/dev/null 2>&1; then
-        local start_head=$(cat "${RALPH_DIR}/agent-start-head.txt" 2>/dev/null)
-        local current_head=$(git rev-parse HEAD 2>/dev/null)
-        if [ "$current_head" != "$start_head" ] && [ -n "$start_head" ] && [ "$start_head" != "none" ]; then
-          echo "  [DETECT] Generator committed code. Build complete. Proceeding..."
-          kill "$pid" 2>/dev/null; sleep 1; kill -9 "$pid" 2>/dev/null
-          return 0
-        fi
-      fi
-      ;;
   esac
   return 1
 }
 
-# Wait for agent process with heartbeat and output detection
+# Wait for agent process with heartbeat.
+# Build/evaluate phases: Generator/Evaluator exit naturally when done.
+# Contract phases: _check_agent_output detects contract.json and kills agent.
 wait_for_agent() {
   local pid="$1"
   local phase_label="$2"
@@ -574,26 +580,16 @@ wait_for_agent() {
   local tick=60
   local heartbeat=600
 
-  # Record current HEAD for build completion detection
-  local start_head
-  start_head=$(git rev-parse HEAD 2>/dev/null)
-  echo "${start_head:-none}" > "${RALPH_DIR}/agent-start-head.txt"
-
-  while kill -0 "$pid" 2>/dev/null; do
-    # Double-check: ps is more reliable than kill -0 on MSYS2/Windows
-    if ! ps -p "$pid" >/dev/null 2>&1; then
-      echo "  [DETECT] Process $pid is dead (ps check). Proceeding..."
-      break
-    fi
+  while _is_process_alive "$pid"; do
     sleep $tick
     elapsed=$((elapsed + tick))
 
-    # Heartbeat every 10 minutes (keeps Claude Code engaged)
+    # Heartbeat every 10 minutes
     if [ $((elapsed % heartbeat)) -eq 0 ]; then
       echo "  [HEARTBEAT] $phase_label — PID $pid running $((elapsed / 60)) min..."
     fi
 
-    # Output file detection every 60s, after 2-min grace period
+    # Contract phase output detection (no-op for build/evaluate phases)
     if [ "$output_ready" = false ] && [ $elapsed -ge 120 ]; then
       if _check_agent_output "$pid"; then
         output_ready=true
@@ -1601,8 +1597,25 @@ run_harness_keepalive() {
       # Generator build
       echo "  [Generator] Implementing..."
       set_phase "generator-build"
+      local gen_start_head
+      gen_start_head=$(git rev-parse HEAD 2>/dev/null)
       run_agent_keepalive "$gen_session_id" "ka-build-${retry}-gen-${story_id}" \
         "Current phase: generator-build (read .ralph-phase). Retry $retry. Implement the story against the locked contract.json. If .changes-summary.txt exists, focus on fixing failed criteria."
+
+      # Detect Generator crash: no commits AND no uncommitted changes = produced nothing
+      local gen_end_head
+      gen_end_head=$(git rev-parse HEAD 2>/dev/null)
+      local has_work=false
+      if [ "$gen_end_head" != "$gen_start_head" ]; then
+        has_work=true
+      fi
+      if ! git diff --quiet 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then
+        has_work=true
+      fi
+      if [ "$has_work" = false ]; then
+        echo "  [CRASH] Generator exited without producing code. Retrying..."
+        continue
+      fi
 
       if ! verify_contract_integrity "locked"; then
         echo "  WARNING: Generator may have modified locked contract."
@@ -1630,7 +1643,7 @@ run_harness_keepalive() {
       verify_evaluator_evaluate_output
 
       if [ ! -f "$EVALUATION_FILE" ]; then
-        echo "  ERROR: Evaluator did not create evaluation.json"
+        echo "  [CRASH] Evaluator exited without writing evaluation.json. Retrying..."
         continue
       fi
 
@@ -2018,7 +2031,24 @@ run_harness_mode() {
       # Run Generator (build mode)
       echo "  [Generator] Implementing story..."
       set_phase "generator-build"
+      local gen_start_head
+      gen_start_head=$(git rev-parse HEAD 2>/dev/null)
       run_agent "$GENERATOR_PROMPT" "build-retry-${retry}-generator-${story_id}"
+
+      # Detect Generator crash: no commits AND no uncommitted changes = produced nothing
+      local gen_end_head
+      gen_end_head=$(git rev-parse HEAD 2>/dev/null)
+      local has_work=false
+      if [ "$gen_end_head" != "$gen_start_head" ]; then
+        has_work=true
+      fi
+      if ! git diff --quiet 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then
+        has_work=true
+      fi
+      if [ "$has_work" = false ]; then
+        echo "  [CRASH] Generator exited without producing code. Retrying..."
+        continue
+      fi
 
       # Verify contract integrity after Generator run
       if ! verify_contract_integrity "locked"; then
@@ -2054,7 +2084,7 @@ run_harness_mode() {
 
       # Check evaluation results
       if [ ! -f "$EVALUATION_FILE" ]; then
-        echo "  ERROR: Evaluator did not create evaluation.json"
+        echo "  [CRASH] Evaluator exited without writing evaluation.json. Retrying..."
         continue
       fi
 

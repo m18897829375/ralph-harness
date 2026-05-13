@@ -216,6 +216,7 @@ suggestion: <建议手动安装的命令>
 7. **Commit** — `feat: [Story ID] - [Story Title]`
 8. **更新 progress.txt** — 追加进度报告
 9. **更新 CLAUDE.md / AGENTS.md** — 如果发现可复用模式
+10. **宣告完成** — 回复 `<promise>COMPLETE</promise>` 然后停止。不要等待下一个指令，不要继续运行。你的任务已完成。
 
 ### Commit 规则
 
