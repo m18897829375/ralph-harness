@@ -897,14 +897,6 @@ stop_playwright_mcp_server() {
   fi
 }
 
-# 用 claude mcp add 注册用户级 MCP 服务器（绕过 .mcp.json 项目审批）
-register_playwright_mcp() {
-  if claude mcp list 2>/dev/null | grep -q "playwright"; then
-    return 0
-  fi
-  claude mcp add --transport http playwright "http://127.0.0.1:8931/mcp" 2>/dev/null || return 1
-}
-
 run_preflight_checks() {
   echo ""
   echo "--- Pre-flight Tool Checks ---"
@@ -929,8 +921,6 @@ run_preflight_checks() {
   # Phase 2: 启动 HTTP 服务器（包可用才尝试）
   if npx --yes @playwright/mcp@latest --help >/dev/null 2>&1; then
     start_playwright_mcp_server || echo "  [WARN] Playwright MCP server failed to start. Evaluator UI testing will be degraded."
-    # 注册用户级 MCP（绕过 .mcp.json 项目审批）
-    register_playwright_mcp || echo "  [WARN] MCP registration failed. Generator/Evaluator may not see Playwright tools."
   fi
 
   ensure_tool "Context7 MCP" "npx --yes @upstash/context7-mcp --help 2>/dev/null" \
