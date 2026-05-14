@@ -823,10 +823,29 @@ EOF
 # ============================================================
 
 start_playwright_mcp_server() {
-  echo "  Starting Playwright MCP server on port ${PLAYWRIGHT_MCP_PORT}..."
+  # 已有可用服务器 → 直接复用（不杀其他工具的 MCP）
+  if curl -s "http://127.0.0.1:${PLAYWRIGHT_MCP_PORT}/mcp" >/dev/null 2>&1; then
+    echo "  Playwright MCP already available on port ${PLAYWRIGHT_MCP_PORT}. Reusing."
+    return 0
+  fi
 
-  npx @playwright/mcp@latest \
+  # 端口被占但无响应 → 清理僵尸
+  if command -v tasklist >/dev/null 2>&1; then
+    local port_pid
+    port_pid=$(netstat -ano 2>/dev/null | grep ":${PLAYWRIGHT_MCP_PORT}" | grep LISTENING | awk '{print $NF}' | head -1)
+    if [ -n "$port_pid" ] && [ "$port_pid" != "0" ]; then
+      echo "  Port ${PLAYWRIGHT_MCP_PORT} occupied by zombie PID $port_pid. Cleaning up..."
+      taskkill /PID "$port_pid" /F 2>/dev/null || true
+      sleep 1
+    fi
+  fi
+
+  # 启动新服务器
+  echo "  Starting Playwright MCP server on port ${PLAYWRIGHT_MCP_PORT}..."
+  nohup npx --yes @playwright/mcp@latest \
     --port "${PLAYWRIGHT_MCP_PORT}" \
+    --host 127.0.0.1 \
+    --allowed-hosts '*' \
     --headless \
     --browser chromium \
     --no-sandbox \
@@ -834,9 +853,14 @@ start_playwright_mcp_server() {
   local server_pid=$!
   echo "$server_pid" > "$PLAYWRIGHT_MCP_PID_FILE"
 
-  # 等待服务器就绪（最多 30 秒）
   for _ in $(seq 1 30); do
-    if curl -s "http://localhost:${PLAYWRIGHT_MCP_PORT}/mcp" >/dev/null 2>&1; then
+    if ! _is_process_alive "$server_pid"; then
+      echo "  [ERROR] Playwright MCP died during startup."
+      tail -20 "${RALPH_DIR}/playwright-mcp.log" 2>/dev/null || true
+      rm -f "$PLAYWRIGHT_MCP_PID_FILE"
+      return 1
+    fi
+    if curl -s "http://127.0.0.1:${PLAYWRIGHT_MCP_PORT}/mcp" >/dev/null 2>&1; then
       echo "  Playwright MCP ready (PID: $server_pid)"
       return 0
     fi
@@ -844,7 +868,6 @@ start_playwright_mcp_server() {
   done
 
   echo "  [WARN] Playwright MCP did not start within 30s."
-  echo "  Check ${RALPH_DIR}/playwright-mcp.log for errors."
   return 1
 }
 
@@ -853,7 +876,7 @@ stop_playwright_mcp_server() {
     local server_pid
     server_pid=$(cat "$PLAYWRIGHT_MCP_PID_FILE")
     if [ -n "$server_pid" ]; then
-      _kill_process_tree "$server_pid" 2>/dev/null
+      _kill_process_tree "$server_pid" 2>/dev/null || true
       echo "  Playwright MCP server stopped (PID: $server_pid)."
     fi
     rm -f "$PLAYWRIGHT_MCP_PID_FILE"
@@ -1646,6 +1669,16 @@ run_harness_keepalive() {
     echo ""
     echo "--- Build & Evaluate (keep-alive) ---"
 
+    # 清理上次运行残留的 proposed 合同
+    if [ -f "$CONTRACT_FILE" ]; then
+      local contract_status
+      contract_status=$(jq -r '.status // "unknown"' "$CONTRACT_FILE" 2>/dev/null || echo "unknown")
+      if [ "$contract_status" != "locked" ]; then
+        echo "  Cleaning up stale contract (status: $contract_status)..."
+        rm -f "$CONTRACT_FILE"
+      fi
+    fi
+
     rm -f "$EVALUATION_FILE"
     rm -f "${RALPH_DIR}/evaluation-retry-"*.json
     rm -f "${RALPH_DIR}/evaluation-scores.txt"
@@ -2061,6 +2094,16 @@ run_harness_mode() {
     # ============================================================
     echo ""
     echo "--- Build & Evaluate Phase ---"
+
+    # 清理上次运行残留的 proposed 合同（非 locked = 协商未完成）
+    if [ -f "$CONTRACT_FILE" ]; then
+      local contract_status
+      contract_status=$(jq -r '.status // "unknown"' "$CONTRACT_FILE" 2>/dev/null || echo "unknown")
+      if [ "$contract_status" != "locked" ]; then
+        echo "  Cleaning up stale contract (status: $contract_status)..."
+        rm -f "$CONTRACT_FILE"
+      fi
+    fi
 
     # Clean up previous evaluation and backups
     rm -f "$EVALUATION_FILE"
