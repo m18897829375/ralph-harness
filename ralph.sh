@@ -735,7 +735,11 @@ run_agent() {
     echo "  Install the tool above, then press ENTER to retry this phase..."
     echo "  (or Ctrl+C to abort Ralph)"
     echo "==============================================="
-    read -r -p ""
+    if [ -t 0 ]; then
+      read -r -p ""
+    else
+      echo "  [SKIP] stdin unavailable (background mode)."
+    fi
     rm -f "$TOOL_MISSING_FILE"
     echo "  Resuming after manual tool install..."
   fi
@@ -803,7 +807,12 @@ action_needed: Run the install command above, then press ENTER in the Ralph sess
 EOF
 
   # Pause for user intervention
-  read -r -p ""
+  if [ -t 0 ]; then
+    read -r -p ""
+  else
+    echo "  [SKIP] stdin unavailable (background mode) — cannot pause."
+    return 1
+  fi
 
   # Re-check after user claims to have fixed it
   if eval "$check_cmd" &>/dev/null; then
@@ -979,7 +988,11 @@ run_agent_keepalive() {
     echo ""
     echo "  Install the tool above, then press ENTER to retry..."
     echo "==============================================="
-    read -r -p ""
+    if [ -t 0 ]; then
+      read -r -p ""
+    else
+      echo "  [SKIP] stdin unavailable (background mode)."
+    fi
     rm -f "$TOOL_MISSING_FILE"
     echo "  Resuming after manual tool install..."
   fi
@@ -1303,7 +1316,12 @@ run_harness_single_pass() {
       echo "  This resolution will be sent to the Evaluator for formal review."
       echo "  Only proceed if you (the human user) wrote or approved this."
       echo "  ==============================================================="
-      read -r -p "  Send to Evaluator? [y/N]: " confirm
+      local confirm="n"
+      if [ -t 0 ]; then
+        read -r -p "  Send to Evaluator? [y/N]: " confirm
+      else
+        echo "  stdin unavailable — defaulting to 'n' (skip user-resolution)"
+      fi
       if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
         echo "  Aborted. Remove .ralph/user-resolution.md and re-run ralph.sh."
         RALPH_NORMAL_EXIT=true
@@ -1527,7 +1545,12 @@ run_harness_keepalive() {
       echo "  This resolution will be sent to the Evaluator for formal review."
       echo "  Only proceed if you (the human user) wrote or approved this."
       echo "  ==============================================================="
-      read -r -p "  Send to Evaluator? [y/N]: " confirm
+      local confirm="n"
+      if [ -t 0 ]; then
+        read -r -p "  Send to Evaluator? [y/N]: " confirm
+      else
+        echo "  stdin unavailable — defaulting to 'n' (skip user-resolution)"
+      fi
       if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
         echo "  Aborted. Remove .ralph/user-resolution.md and re-run ralph.sh."
         RALPH_NORMAL_EXIT=true
@@ -1975,7 +1998,12 @@ run_harness_mode() {
       echo "  This resolution will be sent to the Evaluator for formal review."
       echo "  Only proceed if you (the human user) wrote or approved this."
       echo "  ==============================================================="
-      read -r -p "  Send to Evaluator? [y/N]: " confirm
+      local confirm="n"
+      if [ -t 0 ]; then
+        read -r -p "  Send to Evaluator? [y/N]: " confirm
+      else
+        echo "  stdin unavailable — defaulting to 'n' (skip user-resolution)"
+      fi
       if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
         echo "  Aborted. Remove .ralph/user-resolution.md and re-run ralph.sh."
         RALPH_NORMAL_EXIT=true
