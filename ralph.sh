@@ -821,9 +821,8 @@ EOF
 # ============================================================
 
 start_playwright_mcp_server() {
-  # 已有可用服务器 → 直接复用（SSE 握手检测，非 plain GET）
-  if curl -s -N -H "Accept: text/event-stream" --max-time 2 \
-    "http://127.0.0.1:${PLAYWRIGHT_MCP_PORT}/mcp" 2>/dev/null | head -1 | grep -q "event"; then
+  # 已有可用服务器 → 直接复用（plain HTTP GET，400 也是有效响应）
+  if curl -s --max-time 2 "http://127.0.0.1:${PLAYWRIGHT_MCP_PORT}/mcp" >/dev/null 2>&1; then
     echo "  Playwright MCP already available on port ${PLAYWRIGHT_MCP_PORT}. Reusing."
     return 0
   fi
@@ -838,6 +837,9 @@ start_playwright_mcp_server() {
       sleep 1
     fi
   fi
+
+  # 确保 Chromium 已安装（@playwright/mcp 不会自动安装浏览器）
+  npx playwright install chromium 2>/dev/null || echo "  [WARN] Cannot install Chromium. Server may fail."
 
   # 启动新服务器
   echo "  Starting Playwright MCP server on port ${PLAYWRIGHT_MCP_PORT}..."
@@ -859,8 +861,7 @@ start_playwright_mcp_server() {
       rm -f "$PLAYWRIGHT_MCP_PID_FILE"
       return 1
     fi
-    if curl -s -N -H "Accept: text/event-stream" --max-time 2 \
-      "http://127.0.0.1:${PLAYWRIGHT_MCP_PORT}/mcp" 2>/dev/null | head -1 | grep -q "event"; then
+    if curl -s --max-time 2 "http://127.0.0.1:${PLAYWRIGHT_MCP_PORT}/mcp" >/dev/null 2>&1; then
       echo "  Playwright MCP ready (PID: $server_pid)"
       return 0
     fi
