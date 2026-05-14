@@ -1,4 +1,4 @@
-﻿#!/bin/bash
+#!/bin/bash
 # Ralph Harness — Autonomous AI agent loop with Generator-Evaluator architecture
 # Usage: ./ralph.sh [--mode harness|simple] [--tool amp|claude]
 #                  [--audit] [--track-cost] [--max-retries N] [--max-contract-rounds N]
