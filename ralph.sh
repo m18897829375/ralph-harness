@@ -196,7 +196,7 @@ PLAYWRIGHT_MCP_PID_FILE="${RALPH_DIR}/playwright-mcp.pid"
 # 清理上次 crash 遗留的 PID 文件 + Playwright 端口占用
 rm -f "${RALPH_DIR}/agent-pid.txt"
 if command -v tasklist >/dev/null 2>&1; then
-  _port_pid=$(netstat -ano 2>/dev/null | grep ":${PLAYWRIGHT_MCP_PORT}" | grep LISTENING | awk '{print $NF}' | head -1)
+  _port_pid=$(netstat -ano 2>/dev/null | grep ":${PLAYWRIGHT_MCP_PORT}" | grep LISTENING | awk '{print $NF}' | head -1 || true)
   if [ -n "$_port_pid" ] && [ "$_port_pid" != "0" ]; then
     taskkill /PID "$_port_pid" /F 2>/dev/null
   fi
@@ -272,7 +272,7 @@ _kill_process_tree() {
     for child in $children; do
       _kill_process_tree "$child"
     done
-    kill -9 "$pid" 2>/dev/null
+    kill -9 "$pid" 2>/dev/null || true
   fi
 }
 
@@ -580,7 +580,7 @@ _check_agent_output() {
     generator-contract)
       if [ -f "$CONTRACT_FILE" ] && [ -s "$CONTRACT_FILE" ]; then
         local status
-        status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null)
+        status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null || echo "")
         if [ -n "$status" ]; then
           echo "  [DETECT] contract.json ready (status: $status). Proceeding..."
           _kill_process_tree "$pid"
@@ -591,7 +591,7 @@ _check_agent_output() {
     evaluator-contract|evaluator-user-resolution)
       if [ -f "$CONTRACT_FILE" ] && [ -s "$CONTRACT_FILE" ]; then
         local status
-        status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null)
+        status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null || echo "")
         case "$status" in
           locked|generator_revise)
             echo "  [DETECT] contract.json review done (status: $status). Proceeding..."
@@ -845,7 +845,7 @@ start_playwright_mcp_server() {
   # 端口被占但无响应 → 清理僵尸
   if command -v tasklist >/dev/null 2>&1; then
     local port_pid
-    port_pid=$(netstat -ano 2>/dev/null | grep ":${PLAYWRIGHT_MCP_PORT}" | grep LISTENING | awk '{print $NF}' | head -1)
+    port_pid=$(netstat -ano 2>/dev/null | grep ":${PLAYWRIGHT_MCP_PORT}" | grep LISTENING | awk '{print $NF}' | head -1 || true)
     if [ -n "$port_pid" ] && [ "$port_pid" != "0" ]; then
       echo "  Port ${PLAYWRIGHT_MCP_PORT} occupied by zombie PID $port_pid. Cleaning up..."
       taskkill /PID "$port_pid" /F 2>/dev/null || true
@@ -1117,11 +1117,11 @@ update_prd_evaluation() {
 
   if [ -f "$EVALUATION_FILE" ]; then
     local overall_pass
-    overall_pass=$(jq -r '.overallPass // false' "$EVALUATION_FILE")
+    overall_pass=$(jq -r '.overallPass // false' "$EVALUATION_FILE" 2>/dev/null || echo "false")
     local overall_score
-    overall_score=$(jq -r '.overallScore // 0' "$EVALUATION_FILE")
+    overall_score=$(jq -r '.overallScore // 0' "$EVALUATION_FILE" 2>/dev/null || echo "0")
     local retry_attempt
-    retry_attempt=$(jq -r '.retryAttempt // 0' "$EVALUATION_FILE")
+    retry_attempt=$(jq -r '.retryAttempt // 0' "$EVALUATION_FILE" 2>/dev/null || echo "0")
 
     jq --arg id "$story_id" \
        --argjson pass "$overall_pass" \
