@@ -718,7 +718,7 @@ run_agent() {
     local agent_pid=$!
     echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
     wait_for_agent "$agent_pid" "$phase_label"
-    _kill_process_tree "$agent_pid" 2>/dev/null
+    _kill_process_tree "$agent_pid" 2>/dev/null || true
     rm -f "${RALPH_DIR}/agent-pid.txt"
   fi
 
@@ -929,7 +929,7 @@ run_agent_keepalive() {
   local agent_pid=$!
   echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
   wait_for_agent "$agent_pid" "$phase_label"
-  _kill_process_tree "$agent_pid" 2>/dev/null
+  _kill_process_tree "$agent_pid" 2>/dev/null || true
   rm -f "${RALPH_DIR}/agent-pid.txt"
 
   cost_track_end "$phase_label"
