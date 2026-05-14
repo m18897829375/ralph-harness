@@ -8,13 +8,16 @@ set -e
 
 # Force UTF-8 encoding for Chinese/Unicode on Windows MSYS2
 # Detect available locale: C.UTF-8 is glibc built-in, en_US.UTF-8 is common fallback
+# set +e: background mode may have different locale environment
+set +e
 if locale -a 2>/dev/null | grep -qi "C.UTF-8\|C.utf8"; then
   export LC_ALL=C.UTF-8
 elif locale -a 2>/dev/null | grep -qi "en_US.UTF-8\|en_US.utf8\|en_US.utf-8"; then
-  export LC_ALL=$(locale -a 2>/dev/null | grep -i "en_US.utf" | head -1)
+  export LC_ALL=$(locale -a 2>/dev/null | grep -i "en_US.utf" | head -1 || echo "C")
 else
   export LC_ALL=C
 fi
+set -e
 export LANG="$LC_ALL"
 
 # ============================================================
