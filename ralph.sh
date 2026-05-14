@@ -188,7 +188,7 @@ rm -f "${RALPH_DIR}/agent-pid.txt"
 if command -v tasklist >/dev/null 2>&1; then
   _port_pid=$(netstat -ano 2>/dev/null | grep ":${PLAYWRIGHT_MCP_PORT}" | grep LISTENING | awk '{print $NF}' | head -1 || true)
   if [ -n "$_port_pid" ] && [ "$_port_pid" != "0" ]; then
-    taskkill /PID "$_port_pid" /F 2>/dev/null
+    taskkill /PID "$_port_pid" /F 2>/dev/null || true
   fi
 fi
 
