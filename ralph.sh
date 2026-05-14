@@ -591,36 +591,61 @@ _check_agent_output() {
   return 1
 }
 
-# Wait for agent process with heartbeat.
-# Build/evaluate phases: Generator/Evaluator exit naturally when done.
-# Contract phases: _check_agent_output detects contract.json and kills agent.
+# Wait for agent completion.
+# Build/evaluate: file-based signals (immune to launcher/worker PID mismatch).
+# Contract: process polling + _check_agent_output.
 wait_for_agent() {
   local pid="$1"
   local phase_label="$2"
-  local output_ready=false
-  local elapsed=0
-  local tick=60
-  local heartbeat=600
+  local phase
+  phase=$(cat "$PHASE_FILE" 2>/dev/null)
 
-  while _is_process_alive "$pid"; do
-    sleep $tick
-    elapsed=$((elapsed + tick))
+  case "$phase" in
+    generator-build)    _wait_for_file "${RALPH_DIR}/build-done" "$phase_label" "Generator build" ;;
+    evaluator-evaluate) _wait_for_evaluation "$phase_label" ;;
+    *)                  _wait_for_process_or_output "$pid" "$phase_label" ;;
+  esac
+}
 
-    # Heartbeat every 10 minutes
-    if [ $((elapsed % heartbeat)) -eq 0 ]; then
-      echo "  [HEARTBEAT] $phase_label — PID $pid running $((elapsed / 60)) min..."
-    fi
+# Wait for a sentinel file (build/evaluate phases — no PID dependency).
+_wait_for_file() {
+  local file="$1" phase_label="$2" desc="$3"
+  local elapsed=0 tick=60 timeout=7200
+  rm -f "$file"
+  while [ $elapsed -lt $timeout ]; do
+    sleep $tick; elapsed=$((elapsed + tick))
+    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min..."
+    [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
+  done
+  echo "  [TIMEOUT] $desc did not complete within $((timeout / 60)) min."
+  return 1
+}
 
-    # Contract phase output detection (no-op for build/evaluate phases)
-    if [ "$output_ready" = false ] && [ $elapsed -ge 120 ]; then
-      if _check_agent_output "$pid"; then
-        output_ready=true
-      fi
+# Wait for evaluation.json to appear with valid score.
+_wait_for_evaluation() {
+  local phase_label="$1" elapsed=0 tick=60 timeout=7200
+  while [ $elapsed -lt $timeout ]; do
+    sleep $tick; elapsed=$((elapsed + tick))
+    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — waiting for evaluation, $((elapsed / 60)) min..."
+    if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
+      local s; s=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null || echo "-1")
+      [ "$s" != "-1" ] && [ "$s" != "null" ] && echo "  Evaluation complete (score: $s, $((elapsed / 60)) min)." && return 0
     fi
   done
+  echo "  [TIMEOUT] No evaluation.json after $((timeout / 60)) min."
+  return 1
+}
 
+# Process-polling wait for contract phases.
+_wait_for_process_or_output() {
+  local pid="$1" phase_label="$2"
+  local output_ready=false elapsed=0 tick=60 heartbeat=600
+  while _is_process_alive "$pid"; do
+    sleep $tick; elapsed=$((elapsed + tick))
+    [ $((elapsed % heartbeat)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — PID $pid running $((elapsed / 60)) min..."
+    [ "$output_ready" = false ] && [ $elapsed -ge 120 ] && _check_agent_output "$pid" && output_ready=true
+  done
   wait "$pid" 2>/dev/null
-  return 0
 }
 
 # ============================================================
@@ -1433,8 +1458,8 @@ run_harness_mode() {
       fi
     fi
 
-    # Clean up previous evaluation and backups
-    rm -f "$EVALUATION_FILE"
+    # Clean up previous evaluation, build signal, and backups
+    rm -f "$EVALUATION_FILE" "${RALPH_DIR}/build-done"
     rm -f "${RALPH_DIR}/evaluation-retry-"*.json
     rm -f "${RALPH_DIR}/evaluation-scores.txt"
 
@@ -1473,8 +1498,8 @@ run_harness_mode() {
         echo "  Changes summary generated for retry."
       fi
 
-      # Delete old evaluation.json to prevent stale-score loop if Evaluator crashes
-      rm -f "$EVALUATION_FILE"
+      # Delete old evaluation and build signal to prevent stale scores
+      rm -f "$EVALUATION_FILE" "${RALPH_DIR}/build-done"
 
       # Verify contract is still locked before build
       if ! verify_contract_integrity "locked"; then
