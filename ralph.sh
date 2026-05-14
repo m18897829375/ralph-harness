@@ -4,7 +4,8 @@
 #                  [--audit] [--track-cost] [--max-retries N] [--max-contract-rounds N]
 #                  [--degradation-threshold N] [max_iterations]
 
-set -e
+# set -e 已移至主流程入口（run_harness_mode / run_simple_mode）。
+# 初始化/清理代码不受 set -e 约束 —— BashFAQ/105
 
 # Force UTF-8 encoding for Chinese/Unicode on Windows MSYS2
 # Detect available locale: C.UTF-8 is glibc built-in, en_US.UTF-8 is common fallback
@@ -1107,6 +1108,7 @@ verify_contract_integrity() {
 # MODE: simple (original single-agent behavior)
 # ============================================================
 run_simple_mode() {
+  set -e  # 核心业务逻辑：启用错误检测
   echo "Starting Ralph - Mode: $MODE - Tool: $TOOL - Max iterations: $MAX_ITERATIONS"
 
   for i in $(seq 1 $MAX_ITERATIONS); do
@@ -1203,6 +1205,7 @@ generate_audit_report() {
 # MODE: harness (Generator-Evaluator architecture)
 # ============================================================
 run_harness_mode() {
+  set -e  # 核心业务逻辑：启用错误检测
   echo "Starting Ralph - Mode: $MODE - Tool: $TOOL"
   echo "Max retries per story: $MAX_RETRIES"
   echo "Max contract rounds: $MAX_CONTRACT_ROUNDS"
