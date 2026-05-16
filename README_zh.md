@@ -141,6 +141,32 @@ Ralph 使用 Playwright MCP 进行浏览器端到端测试。**HTTP 传输模式
 
 Ralph 自动管理 Playwright MCP 服务器生命周期——启动、健康检查、端口复用、退出清理。
 
+## 📋 准备 PRD（首次运行前必做）
+
+在运行 Ralph 之前，需要先生成 PRD 文档和 `prd.json` 文件。
+
+### 第一步：生成 PRD 文档
+
+对 Claude Code 说：
+
+```
+加载 prd skill 并且为你的计划创建一个新的 PRD 文件
+```
+
+Claude Code 会提出几个澄清问题（项目名称、技术栈、功能需求等），回答后自动生成 `tasks/prd-[feature-name].md`。
+
+### 第二步：转化为 prd.json
+
+对 Claude Code 说：
+
+```
+加载 ralph skill 并且为你的计划的 prd 文件转化为新的 prd.json 文件
+```
+
+Claude Code 会将 Markdown PRD 转化为 Ralph 需要的 `prd.json` 格式（包含 userStories、acceptanceCriteria、evaluation 字段等）。
+
+> **注意**：`prd.json` 必须放在项目根目录下。Ralph 启动时会自动读取此文件。
+
 ## 🚀 快速启动
 
 ### 标准 Harness 模式
