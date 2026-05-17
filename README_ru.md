@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <span>English</span> |
+  <a href="README.md">English</a> |
   <a href="README_zh.md">中文</a> |
   <a href="README_ar.md">العربية</a> |
   <a href="README_fa.md">فارسی</a> |
@@ -11,7 +11,8 @@
   <a href="README_id.md">Bahasa Indonesia</a> |
   <a href="README_it.md">Italiano</a> |
   <a href="README_ja.md">日本語</a> |
-  <a href="README_zh_TW.md">繁體中文</a>
+  <a href="README_zh_TW.md">繁體中文</a> |
+  <span>Русский</span>
 </p>
 
 <p align="center">
@@ -26,13 +27,13 @@
 
 # 🤖 Ralph Harness
 
-**Generator-Evaluator Dual-Agent Autonomous Development System** — Converts PRD user stories into runnable code one by one, with zero human intervention.
+**Автономная система разработки с двумя агентами: Генератор и Оценщик** — поочередно превращает пользовательские истории из PRD в работающий код, без участия человека.
 
-Ralph is a pure Bash orchestration layer that drives [Claude Code](https://docs.anthropic.com/en/docs/claude-code) as Generator (implementer) and Evaluator (QA tester), completing software development autonomously through a **Contract Negotiation → Implementation → Evaluation** closed loop.
+Ralph — это чисто Bash-оркестровочный слой, который управляет [Claude Code](https://docs.anthropic.com/en/docs/claude-code) в роли Генератора (разработчик) и Оценщика (QA-тестировщик), автономно завершая разработку ПО через замкнутый цикл **Согласование контракта → Реализация → Оценка**.
 
-Inspired by [Anthropic's Harness Design Research](https://www.anthropic.com/engineering/harness-design-long-running-apps) and [Geoffrey Huntley's Ralph Pattern](https://ghuntley.com/ralph/). 🚀
+Вдохновлен [Anthropic's Harness Design Research](https://www.anthropic.com/engineering/harness-design-long-running-apps) и [Geoffrey Huntley's Ralph Pattern](https://ghuntley.com/ralph/). 🚀
 
-## 📺 How It Works
+## 📺 Как это работает
 
 ```
 ┌─ Ralph (ralph.sh) ──────────────────────────────────────────┐
@@ -41,39 +42,39 @@ Inspired by [Anthropic's Harness Design Research](https://www.anthropic.com/engi
 │  │ Generator │ ──────────────────→│ Evaluator│               │
 │  │  (Claude) │←── ACs ───────────│ (Claude) │               │
 │  └─────┬─────┘                    └────┬─────┘               │
-│        │ Write code                    │ Browser test         │
+│        │ Пишет код                    │ Тестирует в браузере  │
 │        ↓                               ↓                     │
-│   Source + commit              evaluation.json              │
-│   + build-done signal            (score + feedback)          │
+│   Исходный код + коммит       evaluation.json              │
+│   + сигнал build-done           (оценка + обратная связь)    │
 │                                                               │
-│   Strict Phase Gates at every step —                           │
-│   cross-phase operations auto-detected and reverted            │
+│   Строгие фазовые шлюзы на каждом шагу —                       │
+│   межфазные операции автоматически обнаруживаются и откатываются│
 └───────────────────────────────────────────────────────────────┘
 ```
 
-1. **Negotiate Contract** — Generator reads PRD → drafts contract.json → Evaluator reviews & scores → lock or return
-2. **Implement Code** — Generator builds against locked contract → typecheck/lint → commit → write build-done
-3. **Evaluate & Score** — Evaluator starts app → Playwright browser testing → 4-dimension scoring → evaluation.json
-4. **Retry on Failure** — Score below threshold → changes-summary feedback → Generator fixes → re-evaluate
+1. **Согласование контракта** — Генератор читает PRD → составляет contract.json → Оценщик проверяет и оценивает → блокировка или возврат
+2. **Реализация кода** — Генератор пишет код согласно заблокированному контракту → проверка типов/линтинг → коммит → запись build-done
+3. **Оценка и подсчет баллов** — Оценщик запускает приложение → тестирование в браузере через Playwright → оценка по 4 измерениям → evaluation.json
+4. **Повтор при неудаче** — Оценка ниже порога → обратная связь с резюме изменений → Генератор исправляет → повторная оценка
 
-## 🛠 Installation
+## 🛠 Установка
 
-### Prerequisites
+### Предварительные требования
 
-- **Git** — version control
-- **jq** — JSON processing (`brew install jq` / `choco install jq`)
-- **Claude Code** — AI engine (`npm install -g @anthropic-ai/claude-code`)
-- **Node.js 18+** — MCP tool runtime
-- **curl** — MCP server health check
+- **Git** — система контроля версий
+- **jq** — обработка JSON (`brew install jq` / `choco install jq`)
+- **Claude Code** — AI-движок (`npm install -g @anthropic-ai/claude-code`)
+- **Node.js 18+** — среда выполнения для MCP инструментов
+- **curl** — проверка состояния MCP сервера
 
-### Option 1: Standalone
+### Вариант 1: Автономная установка
 
 ```bash
 git clone https://github.com/m18897829375/ralph-harness.git
 cd ralph-harness
 ```
 
-### Option 2: Git Submodule (Recommended)
+### Вариант 2: Git Submodule (Рекомендуется)
 
 ```bash
 cd your-project
@@ -81,17 +82,17 @@ git submodule add https://github.com/m18897829375/ralph-harness.git scripts/ralp
 git submodule update --init --recursive
 ```
 
-### Install MCP Tools (Required for Evaluator browser testing)
+### Установка MCP инструментов (Необходимо для браузерного тестирования Оценщика)
 
 ```bash
 npx playwright install chromium
 ```
 
-## ⚙️ Configuration
+## ⚙️ Настройка
 
-### PRD File
+### Файл PRD
 
-Create `prd.json` in your project root:
+Создайте `prd.json` в корне вашего проекта:
 
 ```json
 {
@@ -123,9 +124,9 @@ Create `prd.json` in your project root:
 }
 ```
 
-### MCP Tools (`.mcp.json`)
+### MCP Инструменты (`.mcp.json`)
 
-Ralph uses Playwright MCP for browser end-to-end testing. **HTTP transport mode** avoids MSYS2 stdio pipe deadlock:
+Ralph использует Playwright MCP для сквозного браузерного тестирования. **Режим HTTP-транспорта** позволяет избежать зависания stdio-каналов в MSYS2:
 
 ```json
 {
@@ -146,37 +147,37 @@ Ralph uses Playwright MCP for browser end-to-end testing. **HTTP transport mode*
 }
 ```
 
-Ralph automatically manages the Playwright MCP server lifecycle — startup, health check, port reuse, and exit cleanup.
+Ralph автоматически управляет жизненным циклом сервера Playwright MCP — запуск, проверка состояния, переиспользование порта и очистка при выходе.
 
-## 📋 Prepare PRD (Required Before First Run)
+## 📋 Подготовка PRD (Обязательно перед первым запуском)
 
-Before running Ralph, you must generate the PRD document and `prd.json` file.
+Перед запуском Ralph необходимо создать документ PRD и файл `prd.json`.
 
-### Step 1: Generate PRD Document
+### Шаг 1: Создание PRD документа
 
-Tell Claude Code:
+Сообщите Claude Code:
 
 ```
 Load the prd skill and create a new PRD file for your plan
 ```
 
-Claude Code will ask clarifying questions (project name, tech stack, requirements, etc.) and auto-generate `tasks/prd-[feature-name].md`.
+Claude Code задаст уточняющие вопросы (название проекта, стек технологий, требования и т.д.) и автоматически создаст `tasks/prd-[feature-name].md`.
 
-### Step 2: Convert to prd.json
+### Шаг 2: Конвертация в prd.json
 
-Tell Claude Code:
+Сообщите Claude Code:
 
 ```
 Load the ralph skill and convert the prd file into a new prd.json file
 ```
 
-Claude Code will convert the Markdown PRD into the `prd.json` format Ralph requires (with userStories, acceptanceCriteria, evaluation fields, etc.).
+Claude Code преобразует Markdown PRD в формат `prd.json`, необходимый Ralph (с userStories, acceptanceCriteria, полями evaluation и т.д.).
 
-> **Note**: `prd.json` must be placed in the project root directory. Ralph reads it automatically on startup.
+> **Примечание**: `prd.json` должен находиться в корневой директории проекта. Ralph читает его автоматически при запуске.
 
-## 🚀 Quick Start
+## 🚀 Быстрый старт
 
-### Standard Harness Mode
+### Стандартный режим Harness
 
 ```bash
 ./scripts/ralph/ralph.sh --mode harness --tool claude \
@@ -187,7 +188,7 @@ Claude Code will convert the Markdown PRD into the `prd.json` format Ralph requi
     --audit --track-cost
 ```
 
-### One-Shot Loop (Recommended, avoids Claude Code Bash timeout)
+### Цикл One-Shot (Рекомендуется, позволяет избежать таймаута Claude Code в Bash)
 
 ```bash
 while true; do
@@ -203,126 +204,126 @@ while true; do
 done
 ```
 
-### Simple Mode
+### Простой режим
 
 ```bash
 ./scripts/ralph/ralph.sh --mode simple --tool claude
 ```
 
-### Parameters
+### Параметры
 
-| Parameter | Default | Description |
+| Параметр | По умолчанию | Описание |
 |------|------|------|
-| `--mode harness` | harness | `harness` (dual-agent) / `simple` (single-agent) |
+| `--mode harness` | harness | `harness` (два агента) / `simple` (один агент) |
 | `--tool claude` | claude | `claude` / `amp` |
-| `--max-contract-rounds N` | 5 | Max contract negotiation rounds |
-| `--max-retries N` | 3 | Max build-evaluate retries |
-| `--degradation-threshold N` | 2 | Abort after N consecutive score drops |
-| `--one-shot` | false | Exit after each story |
-| `--audit` | false | Generate audit report |
-| `--track-cost` | false | Log phase durations |
+| `--max-contract-rounds N` | 5 | Макс. раундов согласования контракта |
+| `--max-retries N` | 3 | Макс. попыток сборки-оценки |
+| `--degradation-threshold N` | 2 | Прервать после N подряд падений оценки |
+| `--one-shot` | false | Выход после каждой истории |
+| `--audit` | false | Создать отчет аудита |
+| `--track-cost` | false | Логировать длительность фаз |
 
-### Exit Codes
+### Коды выхода
 
-| Code | Meaning | Action |
+| Код | Значение | Действие |
 |----|------|------|
-| 0 | All stories complete | Stop |
-| 1 | More stories pending | Continue loop |
-| 2 | Contract negotiation failed | Manual intervention |
+| 0 | Все истории завершены | Остановка |
+| 1 | Остались незавершенные истории | Продолжить цикл |
+| 2 | Сбой согласования контракта | Ручное вмешательство |
 
-## 🏗 Architecture
+## 🏗 Архитектура
 
 ```
 ralph-harness/
-├── ralph.sh                 # Orchestrator (~1700 lines Bash)
-├── generator-prompt.md      # Generator instructions (implementer)
-├── evaluator-prompt.md      # Evaluator instructions (QA tester)
-├── CLAUDE.md                # Simple mode prompt
-├── .mcp.json                # MCP tool configuration
-├── .gitattributes           # LF line ending enforcement
+├── ralph.sh                 # Оркестратор (~1700 строк Bash)
+├── generator-prompt.md      # Инструкции Генератора (разработчик)
+├── evaluator-prompt.md      # Инструкции Оценщика (QA-тестировщик)
+├── CLAUDE.md                # Промпт простого режима
+├── .mcp.json                # Конфигурация MCP инструментов
+├── .gitattributes           # Принудительное использование LF окончаний строк
 └── LICENSE
 ```
 
-### Core Mechanisms
+### Основные механизмы
 
-| Mechanism | Description |
+| Механизм | Описание |
 |------|------|
-| **Contract Negotiation** | Gen & Eva negotiate ACs via contract.json, lock after agreement |
-| **4-Dimension Scoring** | Functionality(30%/70) + Code Quality(25%/60) + UI/Design(25%/65) + Product Depth(20%/50) |
-| **Phase Discipline** | Strict phase gates, cross-phase ops auto-detected and reverted |
-| **File Signals** | No PID tracking — Generator writes `.ralph/build-done` to signal completion |
-| **Crash Recovery** | Auto-retry on timeout, retain completed code, resume from checkpoint |
-| **Process Tree Cleanup** | `taskkill /T` (Win) / recursive `ps --ppid` (Linux), zero orphans |
+| **Согласование контракта** | Генератор и Оценщик согласовывают AC через contract.json, блокировка после соглашения |
+| **Оценка по 4 измерениям** | Функциональность(30%/70) + Качество кода(25%/60) + UI/Дизайн(25%/65) + Глубина продукта(20%/50) |
+| **Фазовая дисциплина** | Строгие фазовые шлюзы, межфазные операции автоматически обнаруживаются и откатываются |
+| **Файловые сигналы** | Без отслеживания PID — Генератор записывает `.ralph/build-done` для сигнализации завершения |
+| **Восстановление после сбоев** | Авто-повтор при таймауте, сохранение завершенного кода, возобновление с контрольной точки |
+| **Очистка дерева процессов** | `taskkill /T` (Win) / рекурсивный `ps --ppid` (Linux), ноль осиротевших процессов |
 
-### Scoring System
+### Система оценки
 
-Any dimension below threshold → story fails. Evaluator writes specific, actionable feedback. Generator retries.
+Оценка ниже порога по любому измерению → история не пройдена. Оценщик пишет конкретную, действенную обратную связь. Генератор повторяет попытку.
 
-| Dimension | Weight | Threshold | Focus |
+| Измерение | Вес | Порог | Фокус |
 |------|------|------|---------|
-| **Functionality** | 30% | 70 | Do all ACs actually work? |
-| **Code Quality** | 25% | 60 | Does code follow project patterns? Security issues? |
-| **UI/Design Quality** | 25% | 65 | Visual coherence / originality (penalize AI slop) |
-| **Product Depth** | 20% | 50 | Is it just a shell? Does data actually flow? |
+| **Функциональность** | 30% | 70 | Все ли AC действительно работают? |
+| **Качество кода** | 25% | 60 | Соответствует ли код паттернам проекта? Проблемы безопасности? |
+| **Качество UI/дизайна** | 25% | 65 | Визуальная целостность / оригинальность (штраф за AI-шаблонность) |
+| **Глубина продукта** | 20% | 50 | Не просто ли это оболочка? Действительно ли данные проходят сквозь систему? |
 
-### Mode Comparison
+### Сравнение режимов
 
-| | Simple | Harness |
+| | Простой | Harness |
 |---|--------|---------|
-| Agents | 1 | 2 (Gen + Eval) |
-| Quality Assurance | Self-check | Contract lock + QA scoring |
-| Browser Testing | Optional | Playwright mandatory |
-| Use Case | Quick backend changes | UI features, complex stories |
+| Агенты | 1 | 2 (Ген + Оц) |
+| Контроль качества | Самопроверка | Блокировка контракта + оценка QA |
+| Браузерное тестирование | Опционально | Обязательно через Playwright |
+| Сценарий использования | Быстрые изменения бэкенда | UI-функции, сложные задачи |
 
-## 🔧 Key Features
+## 🔧 Ключевые особенности
 
-### Windows/MSYS2 Deep Compatibility
+### Глубокая совместимость с Windows/MSYS2
 
-Ralph has been battle-tested on Windows + MSYS2:
+Ralph прошел боевое тестирование на Windows + MSYS2:
 
-- **UTF-8 BOM + CRLF Cleanup** — prevents background mode shebang parse failure
-- **tasklist Process Detection** — Windows native process table, replaces unreliable `kill -0`
-- **`set -e` Scope Limiting** — only core business logic; init/cleanup unaffected
-- **HTTP MCP Transport** — bypasses MSYS2 4KB stdio pipe buffer limit
+- **Очистка UTF-8 BOM + CRLF** — предотвращает сбой парсинга shebang в фоновом режиме
+- **Обнаружение процессов через tasklist** — нативная таблица процессов Windows, заменяет ненадежный `kill -0`
+- **Ограничение области `set -e`** — только основная бизнес-логика; инициализация/очистка не затрагиваются
+- **HTTP MCP транспорт** — обходит ограничение буфера stdio-каналов MSYS2 в 4 КБ
 
-### Automated Operations
+### Автоматизированные операции
 
-- **Auto Archiving** — archives previous run data when starting a new feature branch
-- **Stale Contract Cleanup** — removes un-locked contracts before each story
-- **Playwright MCP Reuse Detection** — reuses existing server if port already occupied
-- **Full Exit Path Coverage** — SIGINT / SIGTERM / EXIT all trigger cleanup
+- **Автоархивирование** — архивирует данные предыдущего запуска при начале новой feature-ветки
+- **Очистка устаревших контрактов** — удаляет незаблокированные контракты перед каждой историей
+- **Обнаружение переиспользования Playwright MCP** — переиспользует существующий сервер, если порт уже занят
+- **Полное покрытие путей выхода** — SIGINT / SIGTERM / EXIT запускают очистку
 
-## 🤝 Contributing
+## 🤝 Участие в разработке
 
-Issues and Pull Requests welcome.
+Приветствуются Issues и Pull Requests.
 
-### After modifying ralph.sh
+### После изменения ralph.sh
 
 ```bash
-bash -n ralph.sh          # Syntax check (never skip)
-git diff --stat           # Verify scope of changes
+bash -n ralph.sh          # Проверка синтаксиса (никогда не пропускайте)
+git diff --stat           # Проверка объема изменений
 ```
 
-Commit message format: `fix:` / `feat:` / `chore:`. Must include at the end:
+Формат сообщения коммита: `fix:` / `feat:` / `chore:`. В конце обязательно указать:
 
 ```
 Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 ```
 
-### Environment Compatibility
+### Совместимость с окружением
 
-| Platform | Status |
+| Платформа | Статус |
 |------|------|
-| Windows (MSYS2 / Git Bash) | ✅ Primary test environment |
-| macOS (Terminal / iTerm2) | ✅ Verified |
-| Linux (bash 5.0+) | ✅ Verified |
+| Windows (MSYS2 / Git Bash) | ✅ Основная тестовая среда |
+| macOS (Terminal / iTerm2) | ✅ Проверено |
+| Linux (bash 5.0+) | ✅ Проверено |
 
-## 📚 License
+## 📚 Лицензия
 
-MIT License — see [LICENSE](LICENSE) file.
+Лицензия MIT — см. файл [LICENSE](LICENSE).
 
 ---
 
 <p align="center">
-  <sub>Built with ❤️ by <a href="https://github.com/m18897829375">m18897829375</a> and Claude Opus 4.7</sub>
+  <sub>Создано с ❤️ автором <a href="https://github.com/m18897829375">m18897829375</a> и Claude Opus 4.7</sub>
 </p>
