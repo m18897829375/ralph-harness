@@ -4,7 +4,15 @@
 
 <p align="center">
   <a href="README.md">English</a> |
-  <span>中文</span>
+  <span>中文</span> |
+  <a href="README_ar.md">العربية</a> |
+  <a href="README_fa.md">فارسی</a> |
+  <a href="README_fr.md">Français</a> |
+  <a href="README_id.md">Bahasa Indonesia</a> |
+  <a href="README_it.md">Italiano</a> |
+  <a href="README_ja.md">日本語</a> |
+  <a href="README_zh_TW.md">繁體中文</a> |
+  <a href="README_ru.md">Русский</a>
 </p>
 
 <p align="center">
