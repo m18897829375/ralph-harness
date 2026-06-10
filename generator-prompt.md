@@ -101,6 +101,17 @@ suggestion: <建议手动安装的命令>
 3. `.ralph/contract.json`（如存在）— 了解当前契约状态
 4. `.ralph/evaluation.json`（如存在）— 了解上次评估失败的原因（仅 build 阶段需要）
 
+5. **搜索索引表**（如上下文提供）— 了解可用的 skill 和 CLI 工具，确保合同中的 verificationSteps 切实可行
+
+---
+
+### 索引表参考（Index Table Reference）
+
+如果上下文中有 "INDEX TABLE AWARENESS" 部分，说明 Harness 项目提供了可搜索的索引表：
+- **skill-index.json** — 696 技能，按 category/phase 分类。查询优先级最高（先于 CLI 索引）。
+- **cli-index.json** — 34 CLI 工具，按 category 分类。在 Skill 索引之后查询。
+- ⚠️ **禁止** cat 整个文件（329KB）；每次按需 grep 搜索。找到匹配条目后 Read 其 file_path 获取完整内容。
+
 ---
 
 ## Phase 1: Sprint Contract (`generator-contract`)
@@ -129,6 +140,20 @@ suggestion: <建议手动安装的命令>
 3. 搜索该领域常见陷阱
 
 使用 WebSearch 工具，最多 3 次搜索。
+
+### Step 2.5: 搜索索引表（合同起草前）
+
+**目的：** 了解可用技能和工具，确保 `verificationSteps` 提出的步骤都能用项目已有工具执行。
+
+**操作：**
+1. 用 grep 搜索 `skill-index.json` 中与当前故事相关的技能（按关键词、category、phase）
+2. 从匹配的技能中，识别可能需要的 CLI 工具
+3. 用 grep 搜索 `cli-index.json` 确认这些工具可用
+
+**规则：**
+- 合同中的 `verificationSteps` 只使用索引表中确认存在的工具
+- 不假设某个 tool 或 skill 存在——必须搜索确认
+- 在合同 `history[].message` 中注明查阅了索引表
 
 ### Step 3: 起草合同
 
@@ -182,6 +207,10 @@ suggestion: <建议手动安装的命令>
 1. **读 locked contract** — 理解验收标准
 2. **读 evaluation feedback** — 如果 `.ralph/evaluation.json` 存在且 `overallPass: false`，仔细读 `feedback`，修复所有指出的问题
 3. **Checkout 正确分支** — 从 prd.json 的 `branchName`
+3.5 **搜索可用的实现工具（如有索引表）：**
+  - grep `skill-index.json` 按当前任务的关键词搜索实现相关技能
+  - grep `cli-index.json` 按 `build-tool`/`test-runner`/`linter-formatter` 搜索
+  - 在 `progress.txt` 中记录使用了哪些技能/工具
 4. **实现** — 写代码
 5. **运行质量检查** — typecheck, lint, test
 6. **Pre-QA 自评（提交前必须完成，避免 Evaluator 因低级错误扣分）**：

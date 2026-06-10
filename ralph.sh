@@ -650,7 +650,53 @@ assemble_agent_context() {
   # 1. Agent prompt (always first)
   cat "$prompt_file"
 
-  # 2. prd.json — summary of all stories + full details of current story only
+  # 2. Harness Index Tables — awareness guide (not full content)
+  local SKILL_INDEX="$PROJECT_DIR/skill-index.json"
+  local CLI_INDEX="$PROJECT_DIR/cli-index.json"
+
+  if [ -f "$SKILL_INDEX" ] || [ -f "$CLI_INDEX" ]; then
+    echo ""
+    echo "=== INDEX TABLE AWARENESS ==="
+    echo "The Harness project provides two searchable index tables. NEVER cat them — grep on demand."
+    echo ""
+
+    if [ -f "$SKILL_INDEX" ]; then
+      echo "--- SKILL INDEX: $SKILL_INDEX ---"
+      echo "~696 skills from claude-skills-main + ECC + OpenCLI, merged & deduplicated."
+      echo "Query FIRST (before CLI index). Grep examples:"
+      echo "  grep -i '\"keyword\"' \"$SKILL_INDEX\"           # search by keyword"
+      echo "  grep '\"category\"' \"$SKILL_INDEX\"              # filter by category"
+      echo "  grep '\"source\"' \"$SKILL_INDEX\"                # filter by source"
+      echo "Categories: 需求分析 | 开发 | 测试 | 部署 | 工具 | 安全 | 性能 | 营销 | 金融 | 合规 | 数据库 | 医疗"
+      echo "Phases: plan | prd | generator | evaluator | verify"
+      case "$phase" in
+        generator-*)
+          echo "Phase hint: grep '\"phase\": \"generator\"' \"$SKILL_INDEX\" for impl skills"
+          ;;
+        evaluator-*)
+          echo "Phase hint: grep '\"phase\": \"evaluator\"' \"$SKILL_INDEX\" for verification skills"
+          ;;
+      esac
+      echo "Once a matching skill is found, Read its file_path to get the full SKILL.md content."
+      echo ""
+    fi
+
+    if [ -f "$CLI_INDEX" ]; then
+      echo "--- CLI INDEX: $CLI_INDEX ---"
+      echo "~34 CLI tools across 13 categories. Query AFTER skill index."
+      echo "Grep examples:"
+      echo "  grep '\"name\": \"toolname\"' \"$CLI_INDEX\"      # find specific tool"
+      echo "  grep '\"category\"' \"$CLI_INDEX\"                # list by category"
+      echo "Categories: version-control | package-manager | build-tool | test-runner |"
+      echo "  linter-formatter | browser-automation | api-client | deployment | agent-ops | code-quality"
+      echo ""
+    fi
+
+    echo "Query order: (1) grep skill-index → (2) grep cli-index. Do NOT cat the entire file."
+    echo ""
+  fi
+
+  # 3. prd.json — summary of all stories + full details of current story only
   if [ -f "$PRD_FILE" ]; then
     echo ""; echo "=== PROJECT CONTEXT ==="
     jq '{
@@ -662,7 +708,7 @@ assemble_agent_context() {
     }' "$PRD_FILE" 2>/dev/null || cat "$PRD_FILE"  # fallback to full file if jq fails
   fi
 
-  # 3. Codebase Patterns from progress.txt
+  # 4. Codebase Patterns from progress.txt
   if [ -f "$PROGRESS_FILE" ]; then
     local patterns
     patterns=$(awk '/^## Codebase Patterns/,/^---$|^## [0-9]/{print}' "$PROGRESS_FILE" 2>/dev/null)
@@ -672,7 +718,7 @@ assemble_agent_context() {
     fi
   fi
 
-  # 4. Phase-specific files
+  # 5. Phase-specific files
   case "$phase" in
     generator-contract)
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== CURRENT CONTRACT ===" && cat "$CONTRACT_FILE"
