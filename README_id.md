@@ -81,12 +81,6 @@ git submodule add https://github.com/m18897829375/ralph-harness.git scripts/ralp
 git submodule update --init --recursive
 ```
 
-### Instal MCP Tools (Wajib untuk pengujian browser Evaluator)
-
-```bash
-npx playwright install chromium
-```
-
 ## ⚙️ Konfigurasi
 
 ### File PRD
@@ -125,28 +119,20 @@ Buat `prd.json` di root proyek Anda:
 
 ### MCP Tools (`.mcp.json`)
 
-Ralph menggunakan Playwright MCP untuk pengujian browser end-to-end. **Mode transport HTTP** menghindari deadlock pipe stdio MSYS2:
+Ralph **tidak** mengelola server MCP. Konfigurasikan `.mcp.json` proyek Anda dengan alat yang dibutuhkan — Generator dan Evaluator akan menggunakan apa pun yang tersedia di sana. Untuk pengujian browser, Playwright MCP direkomendasikan (tapi tidak wajib):
 
 ```json
 {
   "mcpServers": {
     "playwright": {
-      "type": "http",
-      "url": "http://localhost:8931/mcp",
-      "description": "Playwright MCP — HTTP transport to avoid MSYS2 stdio pipe deadlock",
-      "env": {}
-    },
-    "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
-      "description": "Context7 MCP — stdio mode (text-only, small payloads)",
-      "env": {}
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium", "--no-sandbox"]
     }
   }
 }
 ```
 
-Ralph secara otomatis mengelola siklus hidup server Playwright MCP — startup, health check, penggunaan ulang port, dan pembersihan saat keluar.
+> **Catatan**: Pada MSYS2/Windows, gunakan HTTP transport untuk menghindari batasan buffer pipe stdio.
 
 ## 📋 Persiapkan PRD (Wajib Sebelum Menjalankan Pertama Kali)
 

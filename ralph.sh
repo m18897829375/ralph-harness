@@ -182,16 +182,8 @@ fi
 # Signal handling & cleanup
 # ============================================================
 RALPH_NORMAL_EXIT=false
-PLAYWRIGHT_MCP_PORT=8931
-PLAYWRIGHT_MCP_PID_FILE="${RALPH_DIR}/playwright-mcp.pid"
-# 清理上次 crash 遗留的 PID 文件 + Playwright 端口占用
+# 清理上次 crash 遗留的 PID 文件
 rm -f "${RALPH_DIR}/agent-pid.txt"
-if command -v tasklist >/dev/null 2>&1; then
-  _port_pid=$(netstat -ano 2>/dev/null | grep ":${PLAYWRIGHT_MCP_PORT}" | grep LISTENING | awk '{print $NF}' | head -1 || true)
-  if [ -n "$_port_pid" ] && [ "$_port_pid" != "0" ]; then
-    taskkill /PID "$_port_pid" /F 2>/dev/null || true
-  fi
-fi
 
 trap 'cleanup SIGINT' SIGINT
 trap 'cleanup SIGTERM' SIGTERM
@@ -210,7 +202,6 @@ cleanup() {
   fi
   echo "==============================================================="
 
-  stop_playwright_mcp_server
   kill_claude_subprocesses
   save_interrupt_state
 
@@ -841,74 +832,6 @@ EOF
   return 1
 }
 
-# ============================================================
-# Playwright MCP HTTP server lifecycle
-# ============================================================
-
-start_playwright_mcp_server() {
-  # 已有可用服务器 → 直接复用（plain HTTP GET，400 也是有效响应）
-  if curl -s --max-time 2 "http://127.0.0.1:${PLAYWRIGHT_MCP_PORT}/mcp" >/dev/null 2>&1; then
-    echo "  Playwright MCP already available on port ${PLAYWRIGHT_MCP_PORT}. Reusing."
-    return 0
-  fi
-
-  # 端口被占但无响应 → 清理僵尸
-  if command -v tasklist >/dev/null 2>&1; then
-    local port_pid
-    port_pid=$(netstat -ano 2>/dev/null | grep ":${PLAYWRIGHT_MCP_PORT}" | grep LISTENING | awk '{print $NF}' | head -1 || true)
-    if [ -n "$port_pid" ] && [ "$port_pid" != "0" ]; then
-      echo "  Port ${PLAYWRIGHT_MCP_PORT} occupied by zombie PID $port_pid. Cleaning up..."
-      taskkill /PID "$port_pid" /F 2>/dev/null || true
-      sleep 1
-    fi
-  fi
-
-  # 确保 Chromium 已安装（@playwright/mcp 不会自动安装浏览器）
-  npx playwright install chromium 2>/dev/null || echo "  [WARN] Cannot install Chromium. Server may fail."
-
-  # 启动新服务器
-  echo "  Starting Playwright MCP server on port ${PLAYWRIGHT_MCP_PORT}..."
-  nohup npx --yes @playwright/mcp@latest \
-    --port "${PLAYWRIGHT_MCP_PORT}" \
-    --host 127.0.0.1 \
-    --allowed-hosts '*' \
-    --headless \
-    --browser chromium \
-    --no-sandbox \
-    > "${RALPH_DIR}/playwright-mcp.log" 2>&1 &
-  local server_pid=$!
-  echo "$server_pid" > "$PLAYWRIGHT_MCP_PID_FILE"
-
-  for _ in $(seq 1 30); do
-    if ! _is_process_alive "$server_pid"; then
-      echo "  [ERROR] Playwright MCP died during startup."
-      tail -20 "${RALPH_DIR}/playwright-mcp.log" 2>/dev/null || true
-      rm -f "$PLAYWRIGHT_MCP_PID_FILE"
-      return 1
-    fi
-    if curl -s --max-time 2 "http://127.0.0.1:${PLAYWRIGHT_MCP_PORT}/mcp" >/dev/null 2>&1; then
-      echo "  Playwright MCP ready (PID: $server_pid)"
-      return 0
-    fi
-    sleep 1
-  done
-
-  echo "  [WARN] Playwright MCP did not start within 30s."
-  return 1
-}
-
-stop_playwright_mcp_server() {
-  if [ -f "$PLAYWRIGHT_MCP_PID_FILE" ]; then
-    local server_pid
-    server_pid=$(cat "$PLAYWRIGHT_MCP_PID_FILE")
-    if [ -n "$server_pid" ]; then
-      _kill_process_tree "$server_pid" 2>/dev/null || true
-      echo "  Playwright MCP server stopped (PID: $server_pid)."
-    fi
-    rm -f "$PLAYWRIGHT_MCP_PID_FILE"
-  fi
-}
-
 run_preflight_checks() {
   echo ""
   echo "--- Pre-flight Tool Checks ---"
@@ -924,20 +847,11 @@ run_preflight_checks() {
     "brew install git 2>/dev/null || apt-get install -y git 2>/dev/null || choco install git -y 2>/dev/null" \
     "CLI" "version control" || all_ok=false
 
-  # ---- Optional tools (warn but don't block) ----
-  # Phase 1: npm 包可用性检查
-  ensure_tool "Playwright MCP" "npx --yes @playwright/mcp@latest --help 2>/dev/null" \
-    "npx --yes @playwright/mcp@latest install 2>/dev/null || npx playwright install chromium 2>/dev/null" \
-    "MCP" "browser testing (Evaluator)" || echo "  [WARN] Playwright npm package not available"
-
-  # Phase 2: 启动 HTTP 服务器（包可用才尝试）
-  if npx --yes @playwright/mcp@latest --help >/dev/null 2>&1; then
-    start_playwright_mcp_server || echo "  [WARN] Playwright MCP server failed to start. Evaluator UI testing will be degraded."
-  fi
-
-  ensure_tool "Context7 MCP" "npx --yes @upstash/context7-mcp --help 2>/dev/null" \
-    "true" \
-    "MCP" "documentation lookup (Generator)" || echo "  [WARN] Context7 not available — Generator will rely on WebSearch only"
+  # ---- Note on MCP tools ----
+  # Ralph does NOT manage MCP servers. The project's own .mcp.json
+  # (or equivalent configuration) defines what tools are available.
+  # Generator and Evaluator use whatever tools are configured there.
+  echo "  MCP tools: managed by project's .mcp.json — Ralph does not manage MCP lifecycle"
 
   if [ "$all_ok" = false ]; then
     echo ""

@@ -58,9 +58,9 @@
 
 ### 强制规则
 
-1. **必须安装缺失工具。** 如果当前故事需要某工具但你当前没有，必须按下方优先级安装。**禁止用其他方式代替。** 例如：验收标准要求 Playwright 浏览器测试 → 必须装 Playwright，不能用"代码审查"代替。
+1. **按验收标准选择工具。** 阅读验收标准，判断需要什么工具来验证。浏览器 UI 测试 → 使用已配置的浏览器 MCP 工具（如 Playwright）。API 测试 → curl/httpie。数据库验证 → 对应 CLI。**禁止用"代码看起来正确"或"typecheck 通过"代替实测。**
 
-2. **严格按故事的验收标准执行和检测。** 验收标准要求浏览器测试 → 必须用 Playwright 测。要求 API curl 测试 → 必须用 curl/httpie 测。要求数据库查询验证 → 必须用对应 CLI。不能以"代码看起来正确"或"typecheck 通过"代替。
+2. **使用项目已有的工具。** MCP 工具由项目的 `.mcp.json` 配置，你直接使用即可。如果缺少必要的 CLI 工具，按优先级安装：`npm install -g` / `pip install` / `brew install`。
 
 3. **安装失败 → 写报告 → 停止。** 如果自动安装失败：
    - 写入 `.ralph/tool-missing.txt`（格式见下方）
@@ -68,12 +68,6 @@
    - ralph.sh 会检测到此文件并暂停等待人工介入
 
 4. **不写报告直接跳过工具 = 任务失败。** Evaluator 会因为"验收标准未实测"直接扣分。
-
-### 安装优先级
-
-1. **CLI 优先**：`npm install -g` / `pip install` / `brew install`（根据工具类型选择包管理器）
-2. **MCP 后备**：如果无对应 CLI 工具，用 `npx -y <mcp-package>` 作为 MCP 服务器加载
-3. **Playwright 专项**：Playwright 优先使用 MCP 工具（已在 .mcp.json 中配置）。如果 MCP 不可用，回退到 `npx playwright install chromium`
 
 ### 工具缺失报告格式
 

@@ -82,12 +82,6 @@ git submodule add https://github.com/m18897829375/ralph-harness.git scripts/ralp
 git submodule update --init --recursive
 ```
 
-### Install MCP Tools (Required for Evaluator browser testing)
-
-```bash
-npx playwright install chromium
-```
-
 ## ⚙️ Configuration
 
 ### PRD File
@@ -126,28 +120,20 @@ Create `prd.json` in your project root:
 
 ### MCP Tools (`.mcp.json`)
 
-Ralph uses Playwright MCP for browser end-to-end testing. **HTTP transport mode** avoids MSYS2 stdio pipe deadlock:
+Ralph does **not** manage MCP servers. Configure your project's `.mcp.json` with the tools your project needs — Ralph's Generator and Evaluator use whatever is available there. For browser-based testing, a Playwright MCP server is recommended but not required:
 
 ```json
 {
   "mcpServers": {
     "playwright": {
-      "type": "http",
-      "url": "http://localhost:8931/mcp",
-      "description": "Playwright MCP — HTTP transport to avoid MSYS2 stdio pipe deadlock",
-      "env": {}
-    },
-    "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
-      "description": "Context7 MCP — stdio mode (text-only, small payloads)",
-      "env": {}
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium", "--no-sandbox"]
     }
   }
 }
 ```
 
-Ralph automatically manages the Playwright MCP server lifecycle — startup, health check, port reuse, and exit cleanup.
+> **Note**: On MSYS2/Windows, prefer HTTP transport for Playwright MCP to avoid stdio pipe buffer limits. See the [Playwright MCP docs](https://www.npmjs.com/package/@playwright/mcp) for configuration options.
 
 ## 📋 Prepare PRD (Required Before First Run)
 

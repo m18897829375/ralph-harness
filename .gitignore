@@ -12,3 +12,4 @@ progress.txt
 # Claude Code runtime files (keep examples)
 .claude/*
 !/.claude/settings.json.example
+ralph.sh.bak

@@ -81,12 +81,6 @@ git submodule add https://github.com/m18897829375/ralph-harness.git scripts/ralp
 git submodule update --init --recursive
 ```
 
-### MCPツールのインストール（Evaluatorのブラウザテストに必要）
-
-```bash
-npx playwright install chromium
-```
-
 ## ⚙️ 設定
 
 ### PRDファイル
@@ -125,28 +119,20 @@ npx playwright install chromium
 
 ### MCPツール（`.mcp.json`）
 
-RalphはブラウザのエンドツーエンドテストにPlaywright MCPを使用します。**HTTP転送モード**によりMSYS2のstdioパイプデッドロックを回避します：
+RalphはMCPサーバーを**管理しません**。プロジェクトの`.mcp.json`に必要なツールを設定してください — GeneratorとEvaluatorは設定済みのツールを使用します。ブラウザテストにはPlaywright MCPを推奨します（必須ではありません）：
 
 ```json
 {
   "mcpServers": {
     "playwright": {
-      "type": "http",
-      "url": "http://localhost:8931/mcp",
-      "description": "Playwright MCP — HTTP transport to avoid MSYS2 stdio pipe deadlock",
-      "env": {}
-    },
-    "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
-      "description": "Context7 MCP — stdio mode (text-only, small payloads)",
-      "env": {}
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium", "--no-sandbox"]
     }
   }
 }
 ```
 
-RalphはPlaywright MCPサーバーのライフサイクル（起動、ヘルスチェック、ポート再利用、終了クリーンアップ）を自動管理します。
+> **注意**: MSYS2/Windowsでは、stdioパイプのバッファ制限を回避するためHTTPトランスポートを推奨します。
 
 ## 📋 PRDの準備（初回実行前に必須）
 

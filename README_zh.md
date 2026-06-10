@@ -82,12 +82,6 @@ git submodule add https://github.com/m18897829375/ralph-harness.git scripts/ralp
 git submodule update --init --recursive
 ```
 
-### 安装 MCP 工具（Evaluator 浏览器测试需要）
-
-```bash
-npx playwright install chromium
-```
-
 ## ⚙️ 配置说明
 
 ### PRD 文件
@@ -126,28 +120,20 @@ npx playwright install chromium
 
 ### MCP 工具（`.mcp.json`）
 
-Ralph 使用 Playwright MCP 进行浏览器端到端测试。**HTTP 传输模式**避免了 MSYS2 stdio 管道死锁问题：
+Ralph **不管理** MCP 服务器。你需要在项目的 `.mcp.json` 中自行配置需要的工具——Ralph 的 Generator 和 Evaluator 会使用项目配置中已有的工具。对于浏览器测试，推荐（但非强制）配置 Playwright MCP：
 
 ```json
 {
   "mcpServers": {
     "playwright": {
-      "type": "http",
-      "url": "http://localhost:8931/mcp",
-      "description": "Playwright MCP — HTTP 传输，避免 MSYS2 stdio 管道死锁",
-      "env": {}
-    },
-    "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
-      "description": "Context7 MCP — stdio 模式（纯文本，负载小）",
-      "env": {}
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium", "--no-sandbox"]
     }
   }
 }
 ```
 
-Ralph 自动管理 Playwright MCP 服务器生命周期——启动、健康检查、端口复用、退出清理。
+> **注意**：在 MSYS2/Windows 环境下，推荐使用 HTTP 传输模式以避免 stdio 管道缓冲区限制。详见 [Playwright MCP 文档](https://www.npmjs.com/package/@playwright/mcp)。
 
 ## 📋 准备 PRD（首次运行前必做）
 

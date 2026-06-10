@@ -81,12 +81,6 @@ git submodule add https://github.com/m18897829375/ralph-harness.git scripts/ralp
 git submodule update --init --recursive
 ```
 
-### Installa gli Strumenti MCP (Richiesto per il test browser del Valutatore)
-
-```bash
-npx playwright install chromium
-```
-
 ## ⚙️ Configurazione
 
 ### File PRD
@@ -125,28 +119,20 @@ Crea `prd.json` nella root del tuo progetto:
 
 ### Strumenti MCP (`.mcp.json`)
 
-Ralph utilizza Playwright MCP per il test browser end-to-end. La **modalità di trasporto HTTP** evita il deadlock della pipe stdio di MSYS2:
+Ralph **non** gestisce i server MCP. Configura il `.mcp.json` del tuo progetto con gli strumenti necessari — Generator e Evaluator useranno ciò che è disponibile. Per i test browser, Playwright MCP è raccomandato (ma non obbligatorio):
 
 ```json
 {
   "mcpServers": {
     "playwright": {
-      "type": "http",
-      "url": "http://localhost:8931/mcp",
-      "description": "Playwright MCP — HTTP transport to avoid MSYS2 stdio pipe deadlock",
-      "env": {}
-    },
-    "context7": {
       "command": "npx",
-      "args": ["-y", "@upstash/context7-mcp"],
-      "description": "Context7 MCP — stdio mode (text-only, small payloads)",
-      "env": {}
+      "args": ["-y", "@playwright/mcp@latest", "--headless", "--browser", "chromium", "--no-sandbox"]
     }
   }
 }
 ```
 
-Ralph gestisce automaticamente il ciclo di vita del server Playwright MCP — avvio, health check, riutilizzo della porta e pulizia all'uscita.
+> **Nota**: Su MSYS2/Windows, preferisci il trasporto HTTP per evitare i limiti del buffer della pipe stdio.
 
 ## 📋 Prepara il PRD (Obbligatorio Prima del Primo Avvio)
 
