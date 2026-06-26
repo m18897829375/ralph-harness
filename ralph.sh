@@ -592,20 +592,20 @@ wait_for_agent() {
   phase=$(cat "$PHASE_FILE" 2>/dev/null)
 
   case "$phase" in
-    generator-build)    _wait_for_file "${RALPH_DIR}/build-done" "$phase_label" "Generator build" ;;
-    evaluator-evaluate) _wait_for_evaluation "$phase_label" ;;
+    generator-build)    _wait_for_file "${RALPH_DIR}/build-done" "$phase_label" "Generator build" "$pid" ;;
+    evaluator-evaluate) _wait_for_evaluation "$phase_label" "$pid" ;;
     *)                  _wait_for_process_or_output "$pid" "$phase_label" ;;
   esac
 }
 
 # Wait for a sentinel file (build/evaluate phases — no PID dependency).
 _wait_for_file() {
-  local file="$1" phase_label="$2" desc="$3"
+  local file="$1" phase_label="$2" desc="$3" pid="$4"
   local elapsed=0 tick=60 timeout=7200
   rm -f "$file"
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
-    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min..."
+    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
     [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
   done
   echo "  [TIMEOUT] $desc did not complete within $((timeout / 60)) min."
@@ -614,10 +614,10 @@ _wait_for_file() {
 
 # Wait for evaluation.json to appear with valid score.
 _wait_for_evaluation() {
-  local phase_label="$1" elapsed=0 tick=60 timeout=7200
+  local phase_label="$1" pid="$2" elapsed=0 tick=60 timeout=7200
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
-    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — waiting for evaluation, $((elapsed / 60)) min..."
+    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
     if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
       local s; s=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null || echo "-1")
       [ "$s" != "-1" ] && [ "$s" != "null" ] && echo "  Evaluation complete (score: $s, $((elapsed / 60)) min)." && return 0
@@ -650,49 +650,41 @@ assemble_agent_context() {
   # 1. Agent prompt (always first)
   cat "$prompt_file"
 
-  # 2. Harness Index Tables — awareness guide (not full content)
-  local SKILL_INDEX="$PROJECT_DIR/skill-index.json"
-  local CLI_INDEX="$PROJECT_DIR/cli-index.json"
+  # 2. Harness Index Tables — search via search_index.py
+  local SEARCH_SCRIPT="$PROJECT_DIR/scripts/search_index.py"
 
-  if [ -f "$SKILL_INDEX" ] || [ -f "$CLI_INDEX" ]; then
+  if [ -f "$SEARCH_SCRIPT" ]; then
     echo ""
-    echo "=== INDEX TABLE AWARENESS ==="
-    echo "The Harness project provides two searchable index tables. NEVER cat them — grep on demand."
+    echo "=== SEARCH INDEX ==="
+    echo "Use python3 scripts/search_index.py to query skill-index.json and cli-index.json."
+    echo "NEVER cat the raw JSON files — they total ~360KB."
     echo ""
 
-    if [ -f "$SKILL_INDEX" ]; then
-      echo "--- SKILL INDEX: $SKILL_INDEX ---"
-      echo "~696 skills from claude-skills-main + ECC + OpenCLI, merged & deduplicated."
-      echo "Query FIRST (before CLI index). Grep examples:"
-      echo "  grep -i '\"keyword\"' \"$SKILL_INDEX\"           # search by keyword"
-      echo "  grep '\"category\"' \"$SKILL_INDEX\"              # filter by category"
-      echo "  grep '\"source\"' \"$SKILL_INDEX\"                # filter by source"
-      echo "Categories: 需求分析 | 开发 | 测试 | 部署 | 工具 | 安全 | 性能 | 营销 | 金融 | 合规 | 数据库 | 医疗"
-      echo "Phases: plan | prd | generator | evaluator | verify"
-      case "$phase" in
-        generator-*)
-          echo "Phase hint: grep '\"phase\": \"generator\"' \"$SKILL_INDEX\" for impl skills"
-          ;;
-        evaluator-*)
-          echo "Phase hint: grep '\"phase\": \"evaluator\"' \"$SKILL_INDEX\" for verification skills"
-          ;;
-      esac
-      echo "Once a matching skill is found, Read its file_path to get the full SKILL.md content."
-      echo ""
-    fi
+    echo "--- Skill Index (~696 skills) ---"
+    echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<keyword>\"           # semantic search with scoring"
+    echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --category \"<cat>\"  # filter by category (supports 中/英)"
+    case "$phase" in
+      generator-*)
+        echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --phase \"generator\"  # impl skills only"
+        ;;
+      evaluator-*)
+        echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --phase \"evaluator\"  # verification skills only"
+        ;;
+    esac
+    echo "  python3 $SEARCH_SCRIPT --type skill --name \"<exact name>\"            # exact name lookup"
+    echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --format detail  # full details + scoring"
+    echo "  Categories: testing|development|security|performance|deployment|database|..."
 
-    if [ -f "$CLI_INDEX" ]; then
-      echo "--- CLI INDEX: $CLI_INDEX ---"
-      echo "~34 CLI tools across 13 categories. Query AFTER skill index."
-      echo "Grep examples:"
-      echo "  grep '\"name\": \"toolname\"' \"$CLI_INDEX\"      # find specific tool"
-      echo "  grep '\"category\"' \"$CLI_INDEX\"                # list by category"
-      echo "Categories: version-control | package-manager | build-tool | test-runner |"
-      echo "  linter-formatter | browser-automation | api-client | deployment | agent-ops | code-quality"
-      echo ""
-    fi
+    echo ""
+    echo "--- CLI Index (~34 tools) ---"
+    echo "  python3 $SEARCH_SCRIPT --type cli --keyword \"<keyword>\"              # search tools"
+    echo "  python3 $SEARCH_SCRIPT --type cli --category \"<cat>\"                 # by category"
+    echo "  python3 $SEARCH_SCRIPT --type cli --name \"<exact name>\"              # exact name"
+    echo "  Categories: browser-automation|package-manager|build-tool|test-runner|api-client|..."
 
-    echo "Query order: (1) grep skill-index → (2) grep cli-index. Do NOT cat the entire file."
+    echo ""
+    echo "Query order: (1) skill index first → (2) CLI index second."
+    echo "Once you find a matching skill, Read its file_path to get the full SKILL.md."
     echo ""
   fi
 
@@ -765,7 +757,7 @@ run_agent() {
   if [[ "$TOOL" == "amp" ]]; then
     assemble_agent_context "$prompt_file" | amp --dangerously-allow-all 2>&1 || true
   else
-    assemble_agent_context "$prompt_file" | claude --dangerously-skip-permissions --print 2>&1 || true &
+    assemble_agent_context "$prompt_file" | claude --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
     local agent_pid=$!
     echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
     wait_for_agent "$agent_pid" "$phase_label"
