@@ -683,6 +683,10 @@ assemble_agent_context() {
     echo "  Categories: browser-automation|package-manager|build-tool|test-runner|api-client|..."
 
     echo ""
+    echo "--- BM25 Semantic Search ---"
+    echo "  python3 scripts/match_skills.py \"<query>\" --json              # BM25 ranking, higher accuracy"
+
+    echo ""
     echo "Query order: (1) skill index first → (2) CLI index second."
     echo "Once you find a matching skill, Read its file_path to get the full SKILL.md."
     echo ""
@@ -754,10 +758,17 @@ run_agent() {
 
   cost_track_start "$phase_label"
 
+  # Detect role from phase label for RALPH_ROLE env var
+  local role="ralph"
+  case "$phase_label" in
+    *generator*) role="generator" ;;
+    *evaluator*) role="evaluator" ;;
+  esac
+
   if [[ "$TOOL" == "amp" ]]; then
     assemble_agent_context "$prompt_file" | amp --dangerously-allow-all 2>&1 || true
   else
-    assemble_agent_context "$prompt_file" | claude --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
+    assemble_agent_context "$prompt_file" | RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" claude --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
     local agent_pid=$!
     echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
     wait_for_agent "$agent_pid" "$phase_label"
