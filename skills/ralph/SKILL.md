@@ -23,6 +23,7 @@ Take a PRD (markdown file or text) and convert it to `prd.json` in your ralph di
   "project": "[Project Name]",
   "branchName": "ralph/[feature-name-kebab-case]",
   "description": "[Feature description from PRD title/intro]",
+  "techStack": ["TypeScript", "React", "Next.js"],
   "userStories": [
     {
       "id": "US-001",
@@ -40,6 +41,15 @@ Take a PRD (markdown file or text) and convert it to `prd.json` in your ralph di
   ]
 }
 ```
+
+### techStack 字段
+
+从 PRD 中提取技术栈，格式为字符串数组。示例：
+- `["TypeScript", "React", "Vite"]`
+- `["Python", "FastAPI", "PostgreSQL"]`
+- `["Go", "Echo"]`
+
+此字段用于后续自动配置 ECC 语言规则。
 
 ---
 
@@ -167,6 +177,7 @@ Add ability to mark tasks with different statuses.
   "project": "TaskApp",
   "branchName": "ralph/task-status",
   "description": "Task Status Feature - Track task progress with status indicators",
+  "techStack": ["TypeScript", "React", "Next.js"],
   "userStories": [
     {
       "id": "US-001",
@@ -245,11 +256,77 @@ Add ability to mark tasks with different statuses.
 
 ---
 
+## Rules Setup: Copy ECC Rules Based on techStack
+
+**After writing `prd.json`**, read the `techStack` field and copy the matching language rules from the ECC subproject to the project. This ensures Ralph's agents follow language-specific conventions.
+
+### Step 1: Always Copy Common Rules
+
+Copy all files from the ECC `rules/common/` directory to the project:
+
+```
+SOURCE: subprojects/everything-claude-code/rules/common/*
+TARGET: .claude/rules/ecc/common/
+```
+
+Common rules include: `coding-style.md`, `testing.md`, `security.md`, `git-workflow.md`, `code-review.md`, `hooks.md`, `patterns.md`, `performance.md`, `agents.md`, `development-workflow.md`
+
+### Step 2: Copy Language Rules by techStack
+
+For each entry in `techStack`, look up the matching rule directory:
+
+| techStack 关键词 | ECC rules 目录 |
+|:--|:--|
+| TypeScript, JavaScript, JS, TS, TSX, Node.js, Next.js, Express, NestJS | `typescript/` |
+| React, JSX, TSX | `react/` |
+| Python, Django, Flask, FastAPI, PyTorch | `python/` |
+| Go, Golang | `golang/` |
+| Java, Spring, Quarkus, Gradle, Maven, Kotlin | `java/` |
+| Kotlin, KMP, Compose | `kotlin/` |
+| Rust, Cargo | `rust/` |
+| Swift, iOS, SwiftUI | `swift/` |
+| PHP, Laravel | `php/` |
+| Ruby, Rails | `ruby/` |
+| Angular, AngularJS | `angular/` |
+| C, C++ | `cpp/` |
+| C#, .NET, ASP.NET | `csharp/` |
+| Dart, Flutter | `dart/` |
+| F#, FSharp | `fsharp/` |
+| Perl | `perl/` |
+| ArkTS, HarmonyOS, OpenHarmony | `arkts/` |
+| HTML, CSS, Web (通用前端) | `web/` |
+
+Copy ALL files from each matched directory:
+```
+SOURCE: subprojects/everything-claude-code/rules/<matched-dir>/*
+TARGET: .claude/rules/ecc/<matched-dir>/
+```
+
+### Step 3: Verify
+
+After copying, verify the structure:
+```bash
+ls .claude/rules/ecc/common/    # 10 files expected
+ls .claude/rules/ecc/typescript/ # if TypeScript in techStack
+# ... etc
+```
+
+### ⚠️ Critical Rules
+
+- **TARGET MUST be the project's `.claude/rules/ecc/`** — not `~/.claude/rules/ecc/`
+- **Only copy what techStack references** — do NOT copy all language directories
+- **common/ is ALWAYS copied** regardless of techStack
+- **Preserve directory structure** — the ECC rules reference each other as `../common/xxx.md`
+
+---
+
 ## Checklist Before Saving
 
 Before writing prd.json, verify:
 
 - [ ] **Previous run archived** (if prd.json exists with different branchName, archive it first)
+- [ ] `techStack` field populated from PRD content
+- [ ] **ECC rules copied** — common/ + language-specific rules based on techStack
 - [ ] Each story is completable in one iteration (small enough)
 - [ ] Stories are ordered by dependency (schema to backend to UI)
 - [ ] Every story has "Typecheck passes" as criterion
