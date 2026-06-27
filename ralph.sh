@@ -683,11 +683,26 @@ assemble_agent_context() {
     echo "  Categories: browser-automation|package-manager|build-tool|test-runner|api-client|..."
 
     echo ""
-    echo "--- BM25 Semantic Search ---"
-    echo "  python3 scripts/match_skills.py \"<query>\" --json              # BM25 ranking, higher accuracy"
+    echo "--- MCP Index (~2396 servers) ---"
+    echo "  python3 $SEARCH_SCRIPT --type mcp --keyword \"<keyword>\"              # search MCP servers"
+    echo "  python3 $SEARCH_SCRIPT --type mcp --category \"<cat>\"                 # by category"
+    echo "  python3 $SEARCH_SCRIPT --type mcp --name \"<server name>\"             # exact name"
 
     echo ""
-    echo "Query order: (1) skill index first → (2) CLI index second."
+    echo "--- Tool Priority: CLI > MCP (Harness Constraint) ---"
+    echo "  When a CLI and MCP tool both exist for the same task, prefer CLI."
+    echo "  If only an MCP server exists, check if OpenCLI has converted it to CLI:"
+    echo "    python3 $SEARCH_SCRIPT --type cli --keyword \"<mcp server name>\""
+    echo "  Never write scripts as workarounds instead of using available CLI tools."
+
+    echo ""
+    echo "--- BM25 Semantic Search (higher accuracy than keyword search) ---"
+    echo "  python3 scripts/match_skills.py \"<natural language query>\" --json"
+    echo "  Use this when search_index.py keyword search returns poor results."
+    echo "  Example: python3 scripts/match_skills.py \"backend senior developer\" --json"
+
+    echo ""
+    echo "Query order: (1) skill index first → (2) CLI index second → (3) MCP index last."
     echo "Once you find a matching skill, Read its file_path to get the full SKILL.md."
     echo ""
   fi

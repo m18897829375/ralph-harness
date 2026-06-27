@@ -60,14 +60,20 @@
 
 1. **按验收标准选择工具。** 阅读验收标准，判断需要什么工具来验证。浏览器 UI 测试 → 使用已配置的浏览器 MCP 工具（如 Playwright）。API 测试 → curl/httpie。数据库验证 → 对应 CLI。**禁止用"代码看起来正确"或"typecheck 通过"代替实测。**
 
-2. **使用项目已有的工具。** MCP 工具由项目的 `.mcp.json` 配置，你直接使用即可。如果缺少必要的 CLI 工具，按优先级安装：`npm install -g` / `pip install` / `brew install`。
+2. **CLI优先于MCP（Harness 硬性约束）。**
+   - 当同一功能既有CLI工具又有MCP工具时，**只使用CLI工具**。
+   - MCP工具仅当对应CLI不存在时才使用。
+   - 如果只有MCP服务器，先检查是否已被 OpenCLI 转化为CLI（搜索 cli 索引确认）。
+   - **禁止降级**：不能靠编写脚本替代CLI工具，必须直接调用。
 
-3. **安装失败 → 写报告 → 停止。** 如果自动安装失败：
+3. **使用项目已有的工具。** MCP 工具由项目的 `.mcp.json` 配置。如果缺少必要的 CLI 工具，按优先级安装：`npm install -g` / `pip install` / `brew install`。
+
+4. **安装失败 → 写报告 → 停止。** 如果自动安装失败：
    - 写入 `.ralph/tool-missing.txt`（格式见下方）
    - 停止当前任务，不要继续
    - ralph.sh 会检测到此文件并暂停等待人工介入
 
-4. **不写报告直接跳过工具 = 任务失败。** Evaluator 会因为"验收标准未实测"直接扣分。
+5. **不写报告直接跳过工具 = 任务失败。** Evaluator 会因为"验收标准未实测"直接扣分。
 
 ### 工具缺失报告格式
 
@@ -80,6 +86,8 @@ suggestion: <建议手动安装的命令>
 ```
 
 写完报告后正常结束。ralph.sh 检测到 `.ralph/tool-missing.txt` 后暂停等待人工介入。
+
+5. **利用 ECC Rules（如已加载）。** 如果项目 `.claude/rules/ecc/` 目录已由 ralph skill 按 prd.json techStack 自动复制了语言规则（如 coding-style.md, security.md, testing.md），在实现时主动遵循这些规范。在 progress.txt 中注明使用了哪些规则。
 
 ---
 
@@ -108,8 +116,9 @@ suggestion: <建议手动安装的命令>
 ### 索引表参考（Index Table Reference）
 
 如果上下文中有 "SEARCH INDEX" 部分，说明 Harness 项目提供了 `scripts/search_index.py` 工具来搜索索引表：
-- `--type skill` — 搜索 696 技能，支持 `--keyword`、`--category`、`--phase`、`--name`、`--format detail`
-- `--type cli` — 搜索 34 CLI 工具，支持 `--keyword`、`--category`、`--name`
+- `--type skill` — 搜索 ~700 技能（来源：claude-skills-main + ECC + OpenCLI），支持 `--keyword`、`--category`、`--phase`、`--name`、`--format detail`
+- `--type cli` — 搜索 CLI 工具（来源：原生CLI + OpenCLI 转化的 MCP 工具），支持 `--keyword`、`--category`、`--name`
+- `--type mcp` — 搜索 ~2400 MCP 服务器（Awesome MCP Servers 目录）
 - ⚠️ **禁止** cat 原始 JSON 文件（~360KB）；用 search_index.py 按需搜索
 
 ---
@@ -149,6 +158,7 @@ suggestion: <建议手动安装的命令>
 1. `python3 scripts/search_index.py --type skill --keyword "<关键词>"` — 搜索技能（自动打分、中英双向匹配）
 2. `python3 scripts/search_index.py --type skill --keyword "<kw>" --phase "generator"` — 过滤实现阶段技能
 3. `python3 scripts/search_index.py --type cli --keyword "<工具名>"` — 确认工具可用
+4. `python3 scripts/match_skills.py "<自然语言查询>" --json` — BM25 语义匹配，关键词搜索不佳时使用
 
 **规则：**
 - 合同中的 `verificationSteps` 只使用 search_index.py 确认存在的工具
