@@ -53,7 +53,7 @@ CATEGORY_MAP = {
 
 def _find_index(filename):
     """多路径查找索引文件。
-    顺序：HARNESS_INDEX_DIR → 脚本父目录 → 当前目录 → 当前目录的父目录。
+    顺序：HARNESS_INDEX_DIR → 脚本父目录 → 当前目录 → 当前目录父目录 → 子模块祖父目录。
     """
     # 1. 环境变量 HARNESS_INDEX_DIR
     harness_dir = os.environ.get("HARNESS_INDEX_DIR", "")
@@ -72,8 +72,14 @@ def _find_index(filename):
     if path.exists():
         return path
 
-    # 4. 当前工作目录的父目录（Harness 场景：cwdis workspace/，索引在 Harness/）
+    # 4. 当前工作目录的父目录（Harness 场景：cwd 是 workspace/，索引在 Harness/）
     path = Path.cwd().parent / filename
+    if path.exists():
+        return path
+
+    # 5. 脚本祖父目录的父目录（子模块场景：
+    #    脚本在 subprojects/ralph-harness/scripts/，索引在 harness 根目录）
+    path = PROJECT_DIR.parent.parent / filename
     if path.exists():
         return path
 

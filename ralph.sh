@@ -651,7 +651,13 @@ assemble_agent_context() {
   cat "$prompt_file"
 
   # 2. Harness Index Tables — search via search_index.py
-  local SEARCH_SCRIPT="$PROJECT_DIR/scripts/search_index.py"
+  # Self-contained: look in SCRIPT_DIR first (ralph-harness bundled), then PROJECT_DIR (harness provided)
+  local SEARCH_SCRIPT=""
+  if [ -f "$SCRIPT_DIR/scripts/search_index.py" ]; then
+    SEARCH_SCRIPT="$SCRIPT_DIR/scripts/search_index.py"
+  elif [ -f "$PROJECT_DIR/scripts/search_index.py" ]; then
+    SEARCH_SCRIPT="$PROJECT_DIR/scripts/search_index.py"
+  fi
 
   # Detect where index JSON files live (multi-path)
   local INDEX_DIR=""
@@ -661,6 +667,8 @@ assemble_agent_context() {
     INDEX_DIR="$(pwd)"
   elif [ -f "$PROJECT_DIR/skill-index.json" ]; then
     INDEX_DIR="$PROJECT_DIR"
+  elif [ -f "$SCRIPT_DIR/skill-index.json" ]; then
+    INDEX_DIR="$SCRIPT_DIR"
   fi
 
   if [ -f "$SEARCH_SCRIPT" ]; then
@@ -832,10 +840,12 @@ run_agent() {
     INDEX_DIR="$(pwd)"
   elif [ -f "$PROJECT_DIR/skill-index.json" ]; then
     INDEX_DIR="$PROJECT_DIR"
+  elif [ -f "$SCRIPT_DIR/skill-index.json" ]; then
+    INDEX_DIR="$SCRIPT_DIR"
   fi
 
   if [[ "$TOOL" == "amp" ]]; then
-    assemble_agent_context "$prompt_file" | amp --dangerously-allow-all 2>&1 || true
+    assemble_agent_context "$prompt_file" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" amp --dangerously-allow-all 2>&1 || true
   else
     assemble_agent_context "$prompt_file" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" claude --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
     local agent_pid=$!
