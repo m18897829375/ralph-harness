@@ -222,9 +222,16 @@ suggestion: <建议手动安装的命令>
   - `python3 scripts/search_index.py --type skill --keyword "<任务关键词>" --phase "generator"`
   - `python3 scripts/search_index.py --type skill --keyword "<kw>" --category "development"` — 过滤开发类技能
   - `python3 scripts/search_index.py --type cli --keyword "build"` — 搜索 CLI 工具
-4. **实现** — 写代码
-5. **运行质量检查** — typecheck, lint, test
-6. **Pre-QA 自评（提交前必须完成，避免 Evaluator 因低级错误扣分）**：
+4. **[PRECHECK] 确认实现必要性** — 动手前用 Grep/Read 检查目标代码是否已存在：
+   - `grep -r "<关键函数名>" --include="*.ts" --include="*.tsx"` 搜索是否已有实现
+   - 如果功能已完整存在 → 跳过实现，直接报告 "already done" 并继续后续步骤
+   - 如果部分存在 → 只补充缺失部分，不重写已有功能
+   - 在 progress.txt 记录：`[PRECHECK] 目标代码状态：<结果>`
+   - **禁止**：不检查就重写 → 浪费 token + 产生重复代码
+
+5. **实现** — 写代码
+6. **运行质量检查** — typecheck, lint, test
+7. **Pre-QA 自评（提交前必须完成，避免 Evaluator 因低级错误扣分）**：
 
    启动应用（`npm run dev` 等），逐条自检以下清单：
 
@@ -247,10 +254,20 @@ suggestion: <建议手动安装的命令>
 
    Evaluator 会因以下低级错误直接扣分：应用启动崩溃、验收标准未实测、类型错误、空页面、控制台报错。在交给 Evaluator 前修复这些问题是最低成本的得分方式。
 
-7. **Commit** — `feat: [Story ID] - [Story Title]`
-8. **更新 progress.txt** — 追加进度报告
-9. **更新 CLAUDE.md / AGENTS.md** — 如果发现可复用模式
-10. **宣告完成** — 执行 `echo "done" > .ralph/build-done`，然后回复 `<promise>COMPLETE</promise>`，停止。不要等待下一个指令。
+7. **Subagent 调用（建议）** — 以下 subagent 可帮助提高代码质量，建议在提交前按需调用：
+
+   - **code-reviewer**：审查代码质量、潜在 bug、模式一致性。建议每次实现后调用。
+     调用：Task(subagent_type="code-reviewer", prompt="审查本故事的代码变更...")
+   - **security-reviewer**：如涉及认证/授权/加密/用户输入/API密钥/数据库查询，建议调用安全审查。
+   - **tdd-guide**：如本故事包含测试文件，建议调用验证测试质量。
+   - **e2e-runner**：如涉及 UI 交互且已配置 Playwright MCP，建议执行端到端测试。
+
+   调用结果记录在 progress.txt 中。
+
+8. **Commit** — `feat: [Story ID] - [Story Title]`
+9. **更新 progress.txt** — 追加进度报告
+10. **更新 CLAUDE.md / AGENTS.md** — 如果发现可复用模式
+11. **宣告完成** — 执行 `echo "done" > .ralph/build-done`，然后回复 `<promise>COMPLETE</promise>`，停止。不要等待下一个指令。
 
 ### Commit 规则
 

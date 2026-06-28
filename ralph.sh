@@ -464,7 +464,7 @@ verify_contract_phase_output() {
     # Check if Generator violated phase discipline by writing source code
     if git rev-parse --git-dir >/dev/null 2>&1; then
       local changed_files
-      changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | head -5)
+      changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
       if [ -n "$changed_files" ]; then
         echo ""
         echo "==============================================================="
@@ -498,7 +498,7 @@ verify_evaluator_contract_output() {
 
   if git rev-parse --git-dir >/dev/null 2>&1; then
     local changed_files
-    changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | head -5)
+    changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
     if [ -n "$changed_files" ]; then
       echo ""
       echo "==============================================================="
@@ -509,7 +509,8 @@ verify_evaluator_contract_output() {
       echo ""
       echo "  Evaluator must only review contract.json, never modify code."
       echo "  Reverting these changes..."
-      git checkout -- $changed_files 2>/dev/null
+      git submodule foreach --recursive 'git checkout -- . 2>/dev/null || true' 2>/dev/null || true
+      echo "$changed_files" | grep -v "^subprojects/" | while read -r f; do [ -n "$f" ] && git checkout -- "$f" 2>/dev/null || true; done
       echo "==============================================================="
     fi
   fi
@@ -524,7 +525,7 @@ verify_evaluator_evaluate_output() {
 
   if git rev-parse --git-dir >/dev/null 2>&1; then
     local changed_files
-    changed_files=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | head -5)
+    changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
     if [ -n "$changed_files" ]; then
       echo ""
       echo "==============================================================="
@@ -535,7 +536,8 @@ verify_evaluator_evaluate_output() {
       echo ""
       echo "  Evaluator must ONLY evaluate, never modify code."
       echo "  Reverting these changes..."
-      git checkout -- $changed_files 2>/dev/null
+      git submodule foreach --recursive 'git checkout -- . 2>/dev/null || true' 2>/dev/null || true
+      echo "$changed_files" | grep -v "^subprojects/" | while read -r f; do [ -n "$f" ] && git checkout -- "$f" 2>/dev/null || true; done
       echo "==============================================================="
     fi
   fi
@@ -650,7 +652,40 @@ assemble_agent_context() {
   # 1. Agent prompt (always first)
   cat "$prompt_file"
 
-  # 2. Harness Index Tables — search via search_index.py
+  # 2. Role-specific hard constraints (RALPH_ROLE behavioral binding)
+  local role="${RALPH_ROLE:-unknown}"
+  case "$role" in
+    generator)
+      echo ""
+      echo "=== ROLE CONSTRAINT: GENERATOR ==="
+      echo "You are acting as the **Generator** role."
+      echo "Your responsibility: IMPLEMENT code according to the locked contract."
+      echo "Hard constraints:"
+      echo "  - You CREATE and MODIFY source code files."
+      echo "  - You MUST use search_index.py to find development tools and skills."
+      echo "  - You NEVER evaluate your own code as 'correct' -- the Evaluator judges."
+      echo "  - You NEVER modify locked contract.json."
+      echo "  - You MUST complete the Pre-QA checklist before committing."
+      echo "  - If in contract phase, your ONLY output is contract.json."
+      echo "CLI > MCP for tool selection (Harness Constraint)."
+      ;;
+    evaluator)
+      echo ""
+      echo "=== ROLE CONSTRAINT: EVALUATOR ==="
+      echo "You are acting as the **Evaluator** role."
+      echo "Your responsibility: VERIFY and SCORE the Generator's implementation."
+      echo "Hard constraints:"
+      echo "  - You NEVER create or modify source code files."
+      echo "  - You MUST use search_index.py to find testing and verification tools."
+      echo "  - You MUST test in the browser for UI stories -- code reading is not enough."
+      echo "  - You MUST produce evaluation.json with complete verifiedCriteria evidence."
+      echo "  - Every criterion gets PASS or FAIL with concrete evidence."
+      echo "  - Feedback must be specific and actionable -- no vague statements."
+      echo "CLI > MCP for tool selection (Harness Constraint)."
+      ;;
+  esac
+
+  # 3. Harness Index Tables — search via search_index.py
   # Self-contained: look in SCRIPT_DIR first (ralph-harness bundled), then PROJECT_DIR (harness provided)
   local SEARCH_SCRIPT=""
   if [ -f "$SCRIPT_DIR/scripts/search_index.py" ]; then
@@ -794,6 +829,12 @@ assemble_agent_context() {
         echo ""; echo "=== PREVIOUS EVALUATION FEEDBACK ==="
         jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
       fi
+      echo ""
+      echo "=== SUGGESTED SUBAGENTS ==="
+      echo "Consider using Task tool to invoke subagents:"
+      echo "  - code-reviewer: Review code changes for quality (suggested after implementation)"
+      echo "  - security-reviewer: Audit security-sensitive code"
+      echo "  - tdd-guide: Validate test quality and coverage"
       ;;
     evaluator-contract)
       [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "When reviewing the contract, verify that Generator-cited tools exist in the index. Search: python3 scripts/search_index.py"
@@ -807,6 +848,12 @@ assemble_agent_context() {
         echo ""; echo "=== PREVIOUS EVALUATION ==="
         jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
       fi
+      echo ""
+      echo "=== SUGGESTED SUBAGENTS ==="
+      echo "Consider using Task tool to invoke subagents during evaluation:"
+      echo "  - code-reviewer: Review Generator's code changes"
+      echo "  - security-reviewer: Audit security-sensitive changes"
+      echo "  - e2e-runner: Run automated browser tests for UI stories"
       ;;
     evaluator-user-resolution)
       [ -f "${RALPH_DIR}/user-resolution.md" ] && echo "" && echo "=== USER RESOLUTION ===" && cat "${RALPH_DIR}/user-resolution.md"
