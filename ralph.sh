@@ -653,14 +653,28 @@ assemble_agent_context() {
   # 2. Harness Index Tables — search via search_index.py
   local SEARCH_SCRIPT="$PROJECT_DIR/scripts/search_index.py"
 
+  # Detect where index JSON files live (multi-path)
+  local INDEX_DIR=""
+  if [ -n "$HARNESS_INDEX_DIR" ] && [ -d "$HARNESS_INDEX_DIR" ]; then
+    INDEX_DIR="$HARNESS_INDEX_DIR"
+  elif [ -f "$(pwd)/skill-index.json" ]; then
+    INDEX_DIR="$(pwd)"
+  elif [ -f "$PROJECT_DIR/skill-index.json" ]; then
+    INDEX_DIR="$PROJECT_DIR"
+  fi
+
   if [ -f "$SEARCH_SCRIPT" ]; then
+    if [ -n "$INDEX_DIR" ]; then
+      echo ""
+      echo "Index files found at: $INDEX_DIR (HARNESS_INDEX_DIR already set)"
+    fi
     echo ""
     echo "=== SEARCH INDEX ==="
     echo "Use python3 scripts/search_index.py to query skill-index.json and cli-index.json."
-    echo "NEVER cat the raw JSON files — they total ~360KB."
+    echo "NEVER cat the raw JSON files — they total ~1.4 MB."
     echo ""
 
-    echo "--- Skill Index (~696 skills) ---"
+    echo "--- Skill Index (~700 skills) ---"
     echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<keyword>\"           # semantic search with scoring"
     echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --category \"<cat>\"  # filter by category (supports 中/英)"
     case "$phase" in
@@ -705,6 +719,32 @@ assemble_agent_context() {
     echo "Query order: (1) skill index first → (2) CLI index second → (3) MCP index last."
     echo "Once you find a matching skill, Read its file_path to get the full SKILL.md."
     echo ""
+
+  else
+    # Fallback: search_index.py not installed in project
+    echo ""
+    echo "=== SEARCH INDEX (UNAVAILABLE) ==="
+    echo "search_index.py not found at $SEARCH_SCRIPT."
+    echo "Skill/CLI/MCP index search is unavailable for this project."
+    echo "You may still use built-in tools (Bash, Read, Grep) to explore the codebase."
+    echo ""
+  fi
+
+  # 2.5 Pre-search: auto-inject top skills matching current story
+  if [ -f "$SEARCH_SCRIPT" ] && [ -n "$INDEX_DIR" ] && [ -f "$PRD_FILE" ]; then
+    local STORY_TITLE
+    STORY_TITLE=$(jq -r '[.userStories[] | select(.passes == false)] | first | .title // empty' "$PRD_FILE" 2>/dev/null)
+    if [ -n "$STORY_TITLE" ]; then
+      echo "=== PRE-SEARCH RESULTS ==="
+      echo "Auto-searched top skills for story: $STORY_TITLE"
+      echo ""
+      HARNESS_INDEX_DIR="$INDEX_DIR" python3 "$SEARCH_SCRIPT" --type skill --keyword "$STORY_TITLE" --format detail 2>/dev/null | head -35 || echo "(pre-search unavailable)"
+      echo ""
+      echo "To find more skills: python3 scripts/search_index.py --type skill --keyword \"<your keyword>\""
+      echo "To find CLI tools:   python3 scripts/search_index.py --type cli --keyword \"<your keyword>\""
+      echo "To find MCP servers: python3 scripts/search_index.py --type mcp --keyword \"<your keyword>\""
+      echo ""
+    fi
   fi
 
   # 3. prd.json — summary of all stories + full details of current story only
@@ -732,6 +772,7 @@ assemble_agent_context() {
   # 5. Phase-specific files
   case "$phase" in
     generator-contract)
+      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Before drafting the contract, search index tables: python3 scripts/search_index.py --type skill --keyword \"<story keywords>\""
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== CURRENT CONTRACT ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION ==="
@@ -739,6 +780,7 @@ assemble_agent_context() {
       fi
       ;;
     generator-build)
+      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Before implementing, search index tables for relevant development skills and CLI tools."
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== LOCKED CONTRACT (DO NOT MODIFY) ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION FEEDBACK ==="
@@ -746,10 +788,12 @@ assemble_agent_context() {
       fi
       ;;
     evaluator-contract)
+      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "When reviewing the contract, verify that Generator-cited tools exist in the index. Search: python3 scripts/search_index.py"
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== PROPOSED CONTRACT ===" && cat "$CONTRACT_FILE"
       [ -f "${RALPH_DIR}/contract-scores.txt" ] && echo "" && echo "=== ROUND HISTORY ===" && cat "${RALPH_DIR}/contract-scores.txt"
       ;;
     evaluator-evaluate)
+      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Before evaluating, search index tables for testing and verification tools: python3 scripts/search_index.py --type skill --phase evaluator --keyword \"<relevant keywords>\""
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== LOCKED CONTRACT ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION ==="
@@ -780,10 +824,20 @@ run_agent() {
     *evaluator*) role="evaluator" ;;
   esac
 
+  # Detect index directory for HARNESS_INDEX_DIR env var
+  local INDEX_DIR=""
+  if [ -n "$HARNESS_INDEX_DIR" ] && [ -d "$HARNESS_INDEX_DIR" ]; then
+    INDEX_DIR="$HARNESS_INDEX_DIR"
+  elif [ -f "$(pwd)/skill-index.json" ]; then
+    INDEX_DIR="$(pwd)"
+  elif [ -f "$PROJECT_DIR/skill-index.json" ]; then
+    INDEX_DIR="$PROJECT_DIR"
+  fi
+
   if [[ "$TOOL" == "amp" ]]; then
     assemble_agent_context "$prompt_file" | amp --dangerously-allow-all 2>&1 || true
   else
-    assemble_agent_context "$prompt_file" | RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" claude --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
+    assemble_agent_context "$prompt_file" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" claude --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
     local agent_pid=$!
     echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
     wait_for_agent "$agent_pid" "$phase_label"

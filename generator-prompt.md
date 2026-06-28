@@ -109,7 +109,7 @@ suggestion: <建议手动安装的命令>
 3. `.ralph/contract.json`（如存在）— 了解当前契约状态
 4. `.ralph/evaluation.json`（如存在）— 了解上次评估失败的原因（仅 build 阶段需要）
 
-5. **搜索索引表**（如上下文提供）— 了解可用的 skill 和 CLI 工具，确保合同中的 verificationSteps 切实可行
+5. **[REQUIRED] 搜索索引表** — 执行 python3 scripts/search_index.py 查找可用技能和 CLI 工具。合同阶段：搜索与当前故事相关的 skill 和验证工具。Build 阶段：搜索实现相关的开发类/测试类 skill。**禁止跳过此步骤**。未搜索索引表就写合同/实现 = 违反流程。
 
 ---
 
@@ -150,11 +150,11 @@ suggestion: <建议手动安装的命令>
 
 使用 WebSearch 工具，最多 3 次搜索。
 
-### Step 2.5: 搜索索引表（合同起草前）
+### Step 2.5: [REQUIRED] 搜索索引表（合同起草前）
 
 **目的：** 了解可用技能和工具，确保 `verificationSteps` 提出的步骤都能用项目已有工具执行。
 
-**操作：**
+**必须执行以下搜索（至少 2 次）：**
 1. `python3 scripts/search_index.py --type skill --keyword "<关键词>"` — 搜索技能（自动打分、中英双向匹配）
 2. `python3 scripts/search_index.py --type skill --keyword "<kw>" --phase "generator"` — 过滤实现阶段技能
 3. `python3 scripts/search_index.py --type cli --keyword "<工具名>"` — 确认工具可用
@@ -217,11 +217,11 @@ suggestion: <建议手动安装的命令>
 1. **读 locked contract** — 理解验收标准
 2. **读 evaluation feedback** — 如果 `.ralph/evaluation.json` 存在且 `overallPass: false`，仔细读 `feedback`，修复所有指出的问题
 3. **Checkout 正确分支** — 从 prd.json 的 `branchName`
-3.5 **搜索可用的实现工具（如有 search_index.py）：**
+3.5 **[REQUIRED] 搜索可用的实现工具：**
+  **必须执行以下搜索（至少 2 次）**，在 `progress.txt` 中记录搜索结果：
   - `python3 scripts/search_index.py --type skill --keyword "<任务关键词>" --phase "generator"`
   - `python3 scripts/search_index.py --type skill --keyword "<kw>" --category "development"` — 过滤开发类技能
   - `python3 scripts/search_index.py --type cli --keyword "build"` — 搜索 CLI 工具
-  - 在 `progress.txt` 中记录使用了哪些技能/工具
 4. **实现** — 写代码
 5. **运行质量检查** — typecheck, lint, test
 6. **Pre-QA 自评（提交前必须完成，避免 Evaluator 因低级错误扣分）**：
