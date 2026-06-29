@@ -662,7 +662,7 @@ assemble_agent_context() {
       echo "Your responsibility: IMPLEMENT code according to the locked contract."
       echo "Hard constraints:"
       echo "  - You CREATE and MODIFY source code files."
-      echo "  - You MUST use search_index.py to find development tools and skills."
+      echo "  - You MUST use match_skills.py (BM25) to find development skills, then match_cli.py (BM25) for CLI. Use search_index.py --name only for exact confirmation."
       echo "  - You NEVER evaluate your own code as 'correct' -- the Evaluator judges."
       echo "  - You NEVER modify locked contract.json."
       echo "  - You MUST complete the Pre-QA checklist before committing."
@@ -676,7 +676,7 @@ assemble_agent_context() {
       echo "Your responsibility: VERIFY and SCORE the Generator's implementation."
       echo "Hard constraints:"
       echo "  - You NEVER create or modify source code files."
-      echo "  - You MUST use search_index.py to find testing and verification tools."
+      echo "  - You MUST use match_skills.py (BM25) to find verification skills, then match_cli.py (BM25) for CLI. Use search_index.py --name only for exact confirmation."
       echo "  - You MUST test in the browser for UI stories -- code reading is not enough."
       echo "  - You MUST produce evaluation.json with complete verifiedCriteria evidence."
       echo "  - Every criterion gets PASS or FAIL with concrete evidence."
@@ -712,55 +712,46 @@ assemble_agent_context() {
       echo "Index files found at: $INDEX_DIR (HARNESS_INDEX_DIR already set)"
     fi
     echo ""
-    echo "=== SEARCH INDEX ==="
-    echo "Use python3 scripts/search_index.py to query skill-index.json and cli-index.json."
-    echo "NEVER cat the raw JSON files — they total ~1.4 MB."
+    echo "=== SEARCH INDEX (BM25 Semantic Search) ==="
+    echo "Use match_skills.py and match_cli.py for primary search."
+    echo "Use search_index.py ONLY for exact name confirmation."
+    echo "NEVER cat the raw JSON files — they total ~5.4 MB."
     echo ""
 
-    echo "--- Skill Index (~700 skills) ---"
-    echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<keyword>\"           # semantic search with scoring"
-    echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --category \"<cat>\"  # filter by category (supports 中/英)"
-    case "$phase" in
-      generator-*)
-        echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --phase \"generator\"  # impl skills only"
-        ;;
-      evaluator-*)
-        echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --phase \"evaluator\"  # verification skills only"
-        ;;
-    esac
-    echo "  python3 $SEARCH_SCRIPT --type skill --name \"<exact name>\"            # exact name lookup"
-    echo "  python3 $SEARCH_SCRIPT --type skill --keyword \"<kw>\" --format detail  # full details + scoring"
-    echo "  Categories: testing|development|security|performance|deployment|database|..."
-
+    echo "--- Step 1: Skill Search (BM25, recommended) ---"
+    echo "  python3 scripts/match_skills.py --json --top-k 5 \"<natural language query>\""
+    echo "  Example: python3 scripts/match_skills.py --json --top-k 5 \"React login form with JWT\""
+    echo "  Returns: name, score, description_preview, file_path"
+    echo "  Then: Read 2-3 most relevant SKILL.md files (top scoring)"
+    echo "  Then: Skill may suggest additional CLI tools to search in Step 2"
     echo ""
-    echo "--- CLI Index (~34 tools) ---"
-    echo "  python3 $SEARCH_SCRIPT --type cli --keyword \"<keyword>\"              # search tools"
-    echo "  python3 $SEARCH_SCRIPT --type cli --category \"<cat>\"                 # by category"
-    echo "  python3 $SEARCH_SCRIPT --type cli --name \"<exact name>\"              # exact name"
-    echo "  Categories: browser-automation|package-manager|build-tool|test-runner|api-client|..."
 
+    echo "--- Step 2: CLI Search (BM25, after skill review) ---"
+    echo "  python3 scripts/match_cli.py --json --top-k 3 \"<query>\""
+    echo "  Example: python3 scripts/match_cli.py --json --top-k 3 \"curl post api test\""
+    echo "  Results marked: [CLI]=native CLI, [OpenCLI]=converted, [MCP→CLI]=needs conversion"
+    echo "  Choose 1 most relevant CLI tool (unlike skills, CLI tools don't complement each other)"
     echo ""
-    echo "--- MCP Index (~2396 servers) ---"
-    echo "  python3 $SEARCH_SCRIPT --type mcp --keyword \"<keyword>\"              # search MCP servers"
-    echo "  python3 $SEARCH_SCRIPT --type mcp --category \"<cat>\"                 # by category"
-    echo "  python3 $SEARCH_SCRIPT --type mcp --name \"<server name>\"             # exact name"
 
+    echo "--- Step 3: Exact Name Confirmation (only when needed) ---"
+    echo "  python3 $SEARCH_SCRIPT --type skill --name \"<exact name>\""
+    echo "  python3 $SEARCH_SCRIPT --type cli --name \"<exact name>\""
+    echo "  python3 $SEARCH_SCRIPT --type mcp --name \"<exact name>\""
+    echo "  Use ONLY for verifying a specific tool exists — NOT for discovery"
     echo ""
+
+    echo "--- MCP Server Lookup ---"
+    echo "  python3 $SEARCH_SCRIPT --type mcp --keyword \"<function>\""
+    echo ""
+
     echo "--- Tool Priority: CLI > MCP (Harness Constraint) ---"
-    echo "  When a CLI and MCP tool both exist for the same task, prefer CLI."
-    echo "  If only an MCP server exists, check if OpenCLI has converted it to CLI:"
-    echo "    python3 $SEARCH_SCRIPT --type cli --keyword \"<mcp server name>\""
-    echo "  Never write scripts as workarounds instead of using available CLI tools."
-
+    echo "  When CLI and MCP both exist for the same task, prefer CLI."
+    echo "  If only MCP exists, check OpenCLI conversion: match_cli.py --name \"<mcp name>\""
     echo ""
-    echo "--- BM25 Semantic Search (higher accuracy than keyword search) ---"
-    echo "  python3 scripts/match_skills.py \"<natural language query>\" --json"
-    echo "  Use this when search_index.py keyword search returns poor results."
-    echo "  Example: python3 scripts/match_skills.py \"backend senior developer\" --json"
 
-    echo ""
-    echo "Query order: (1) skill index first → (2) CLI index second → (3) MCP index last."
-    echo "Once you find a matching skill, Read its file_path to get the full SKILL.md."
+    echo "--- Workflow Summary ---"
+    echo "  match_skills.py (BM25) → load 2-3 SKILL.md → match_cli.py (BM25) → pick 1 CLI"
+    echo "  search_index.py --name only for exact confirmation (NOT discovery)"
     echo ""
 
   else
@@ -781,11 +772,16 @@ assemble_agent_context() {
       echo "=== PRE-SEARCH RESULTS ==="
       echo "Auto-searched top skills for story: $STORY_TITLE"
       echo ""
-      HARNESS_INDEX_DIR="$INDEX_DIR" python3 "$SEARCH_SCRIPT" --type skill --keyword "$STORY_TITLE" --format detail 2>/dev/null | head -35 || echo "(pre-search unavailable)"
+      python3 "$SCRIPT_DIR/scripts/match_skills.py" --json --top-k 5 "$STORY_TITLE" 2>/dev/null | python3 -c "
+import sys,json
+results=json.load(sys.stdin)
+for r in results[:5]:
+    print(f\"  [{r['score']:.2f}] {r['name']} — {r.get('description_preview','')[:100]}\")
+" 2>/dev/null || echo "(pre-search unavailable)"
       echo ""
-      echo "To find more skills: python3 scripts/search_index.py --type skill --keyword \"<your keyword>\""
-      echo "To find CLI tools:   python3 scripts/search_index.py --type cli --keyword \"<your keyword>\""
-      echo "To find MCP servers: python3 scripts/search_index.py --type mcp --keyword \"<your keyword>\""
+      echo "Read 2-3 most relevant SKILL.md files from above, then:"
+      echo "  python3 scripts/match_cli.py --json --top-k 3 \"<CLI query from skill hints>\""
+      echo "  python3 scripts/search_index.py --type skill --name \"<name>\"  (exact confirmation only)"
       echo ""
     fi
   fi
@@ -815,7 +811,7 @@ assemble_agent_context() {
   # 5. Phase-specific files
   case "$phase" in
     generator-contract)
-      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Before drafting the contract, search index tables: python3 scripts/search_index.py --type skill --keyword \"<story keywords>\""
+      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Search index tables (BM25 first): match_skills.py for skills, match_cli.py for CLI, search_index.py --name for confirmation"
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== CURRENT CONTRACT ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION ==="
@@ -842,7 +838,7 @@ assemble_agent_context() {
       [ -f "${RALPH_DIR}/contract-scores.txt" ] && echo "" && echo "=== ROUND HISTORY ===" && cat "${RALPH_DIR}/contract-scores.txt"
       ;;
     evaluator-evaluate)
-      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Before evaluating, search index tables for testing and verification tools: python3 scripts/search_index.py --type skill --phase evaluator --keyword \"<relevant keywords>\""
+      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Search index tables (BM25 first): match_skills.py for verification skills, match_cli.py for CLI tools, search_index.py --name for confirmation"
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== LOCKED CONTRACT ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION ==="

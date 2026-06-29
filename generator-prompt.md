@@ -150,18 +150,28 @@ suggestion: <建议手动安装的命令>
 
 使用 WebSearch 工具，最多 3 次搜索。
 
-### Step 2.5: [REQUIRED] 搜索索引表（合同起草前）
+### Step 2.5: [REQUIRED] 搜索索引表（合同起草前，BM25 主力）
 
 **目的：** 了解可用技能和工具，确保 `verificationSteps` 提出的步骤都能用项目已有工具执行。
 
-**必须执行以下搜索（至少 2 次）：**
-1. `python3 scripts/search_index.py --type skill --keyword "<关键词>"` — 搜索技能（自动打分、中英双向匹配）
-2. `python3 scripts/search_index.py --type skill --keyword "<kw>" --phase "generator"` — 过滤实现阶段技能
-3. `python3 scripts/search_index.py --type cli --keyword "<工具名>"` — 确认工具可用
-4. `python3 scripts/match_skills.py "<自然语言查询>" --json` — BM25 语义匹配，关键词搜索不佳时使用
+**搜索流程（BM25 发现 → 精确确认）：**
+
+1. **Skill 搜索（BM25 主力）**：
+   `python3 scripts/match_skills.py --json --top-k 5 "<任务描述>"`
+   从 Top-5 中选 2-3 个最相关，Read 其 file_path 加载完整 SKILL.md。
+   Skill 可能提示额外 CLI 需求 → 记录到下一步。
+
+2. **CLI 搜索（BM25 主力）**：
+   `python3 scripts/match_cli.py --json --top-k 3 "<结合 skill 提示的 CLI 查询>"`
+   从 Top-3 中选 1 个最相关 CLI 工具。
+
+3. **精确确认（仅按需）**：
+   `python3 scripts/search_index.py --type skill --name "<exact name>"`
+   `python3 scripts/search_index.py --type cli --name "<exact name>"`
+   仅验证特定工具是否存在，不用于发现。
 
 **规则：**
-- 合同中的 `verificationSteps` 只使用 search_index.py 确认存在的工具
+- 合同中的 `verificationSteps` 只引用经上述流程确认存在的工具
 - 不假设某个 tool 或 skill 存在——必须搜索确认
 - 在合同 `history[].message` 中注明查阅了索引表
 
@@ -217,11 +227,13 @@ suggestion: <建议手动安装的命令>
 1. **读 locked contract** — 理解验收标准
 2. **读 evaluation feedback** — 如果 `.ralph/evaluation.json` 存在且 `overallPass: false`，仔细读 `feedback`，修复所有指出的问题
 3. **Checkout 正确分支** — 从 prd.json 的 `branchName`
-3.5 **[REQUIRED] 搜索可用的实现工具：**
-  **必须执行以下搜索（至少 2 次）**，在 `progress.txt` 中记录搜索结果：
-  - `python3 scripts/search_index.py --type skill --keyword "<任务关键词>" --phase "generator"`
-  - `python3 scripts/search_index.py --type skill --keyword "<kw>" --category "development"` — 过滤开发类技能
-  - `python3 scripts/search_index.py --type cli --keyword "build"` — 搜索 CLI 工具
+3.5 **[REQUIRED] 搜索可用的实现工具（BM25 主力）：**
+
+  **必须执行（至少 3 次搜索）**，在 `progress.txt` 中记录搜索结果：
+  1. `python3 scripts/match_skills.py --json --top-k 5 "<任务关键词>"` — BM25 搜索技能
+  2. Read 2-3 个最相关 SKILL.md，提取其中提示的 CLI 工具需求
+  3. `python3 scripts/match_cli.py --json --top-k 3 "<CLI功能查询>"` — BM25 搜索 CLI
+  4. 仅精确确认时：`python3 scripts/search_index.py --type cli --name "<工具名>"`
 4. **[PRECHECK] 确认实现必要性** — 动手前用 Grep/Read 检查目标代码是否已存在：
    - `grep -r "<关键函数名>" --include="*.ts" --include="*.tsx"` 搜索是否已有实现
    - 如果功能已完整存在 → 跳过实现，直接报告 "already done" 并继续后续步骤
