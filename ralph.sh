@@ -888,9 +888,9 @@ run_agent() {
   fi
 
   if [[ "$TOOL" == "amp" ]]; then
-    assemble_agent_context "$prompt_file" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" amp --dangerously-allow-all 2>&1 || true
+    assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" amp --dangerously-allow-all 2>&1 || true
   else
-    assemble_agent_context "$prompt_file" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" claude --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
+    assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" claude --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
     local agent_pid=$!
     echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
     wait_for_agent "$agent_pid" "$phase_label"
