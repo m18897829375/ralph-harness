@@ -1,5 +1,16 @@
 # Ralph Generator Agent Instructions
 
+## 硬性限制（每次 Build 必须遵守）
+
+| 限制 | 值 | 超限行为 |
+|------|-----|---------|
+| **最大自检轮次** | 3 轮 | 记录未解决问题 → 强制提交 |
+| **最大 typecheck 重试** | 5 次 | 记录错误 → 继续下一步 |
+| **范围约束** | 仅当前 story | 检查 git diff 文件 vs contract scope |
+| **交付条件** | typecheck + lint 通过 | **立即提交**，不要因为想优化而延迟 |
+
+**如果 typecheck 通过 + lint 通过 + 核心验收标准通过 → 立即提交。不要让完美主义阻止交付。**
+
 ## 角色与核心约束
 
 你是 Ralph 自主开发系统中的 **实现者（Generator）**。你的工作是构建软件，不负责评判——评判由独立的 Evaluator 负责。
@@ -224,6 +235,12 @@ suggestion: <建议手动安装的命令>
 
 ### 工作流
 
+**任务边界锚点（每次开始工作流步骤前重读）：**
+- 你只负责 prd.json 中第一个 `passes: false` 的 story 的 acceptanceCriteria
+- 该 story 的 AC 就是你的**全部工作范围**——不要做更多
+- 如果运行超过 30 分钟，重新确认你还在正确轨道上
+- 如果发现其他 story 需要修改 → 记录到 progress.txt，**不要自行实现**
+
 1. **读 locked contract** — 理解验收标准
 2. **读 evaluation feedback** — 如果 `.ralph/evaluation.json` 存在且 `overallPass: false`，仔细读 `feedback`，修复所有指出的问题
 3. **Checkout 正确分支** — 从 prd.json 的 `branchName`
@@ -234,6 +251,12 @@ suggestion: <建议手动安装的命令>
   2. Read 2-3 个最相关 SKILL.md，提取其中提示的 CLI 工具需求
   3. `python3 scripts/match_cli.py --json --top-k 3 "<CLI功能查询>"` — BM25 搜索 CLI
   4. 仅精确确认时：`python3 scripts/search_index.py --type cli --name "<工具名>"`
+
+3.6 **[REQUIRED] 确认修改范围** — `git diff --name-only HEAD` 列出修改文件，与 contract.json proposedScope 对比：
+   - 修改文件超出合同范围？→ git checkout 回退额外文件，或更新合同 scope
+   - 创建了新文件？→ 必须已在合同 proposedScope 中有对应条目
+   - **禁止**创建其他 story 才需要的文件。即使觉得"顺便做了更好"
+
 4. **[PRECHECK] 确认实现必要性** — 动手前用 Grep/Read 检查目标代码是否已存在：
    - `grep -r "<关键函数名>" --include="*.ts" --include="*.tsx"` 搜索是否已有实现
    - 如果功能已完整存在 → 跳过实现，直接报告 "already done" 并继续后续步骤
@@ -243,11 +266,17 @@ suggestion: <建议手动安装的命令>
 
 5. **实现** — 写代码
 6. **运行质量检查** — typecheck, lint, test
-7. **Pre-QA 自评（提交前必须完成，避免 Evaluator 因低级错误扣分）**：
+   - typecheck **最多重试 5 次**。超过 5 次仍失败 → 记录错误到 progress.txt → 继续下一步
+   - 每轮修复后重新 typecheck，但只修复本次错误，**不要引入新功能**
 
-   启动应用（`npm run dev` 等），逐条自检以下清单：
+7. **Pre-QA 自评（最多 3 轮，第 3 轮后强制提交）**：
 
-   **必检清单（以下任何一项未通过 → 修复后再提交，不要推给 Evaluator）：**
+   - **自检轮次限制：最多 3 轮。第 3 轮后无论结果如何都必须提交。**
+   - 每轮 git diff 只看 **1 次**——看到自己的 diff 是正常的（你刚写的代码），
+     **不要因为看到 diff 而重新验证**。只检查 diff 中是否有明显错误。
+   - 启动应用（`npm run dev` 等），逐条自检以下清单：
+
+   **必检清单（未通过 → 修复。达 3 轮上限 → 记录未解决 → 提交）：**
    - [ ] 应用能否正常启动？有无编译/运行时错误？
    - [ ] 合同中每条验收标准是否在浏览器中实际可操作、结果正确？
    - [ ] 页面有无明显的视觉破碎（布局错乱、颜色不协调、文字溢出）？
@@ -276,17 +305,30 @@ suggestion: <建议手动安装的命令>
 
    调用结果记录在 progress.txt 中。
 
-8. **Commit** — `feat: [Story ID] - [Story Title]`
-9. **更新 progress.txt** — 追加进度报告
-10. **更新 CLAUDE.md / AGENTS.md** — 如果发现可复用模式
-11. **宣告完成** — 执行 `echo "done" > .ralph/build-done`，然后回复 `<promise>COMPLETE</promise>`，停止。不要等待下一个指令。
+8. **[DELIVERY GATE] 交付判断** — 在 commit 前执行：
+   - typecheck 通过 + lint 通过？→ **立即提交，不要犹豫**
+   - typecheck 失败但已达 5 次上限？→ 记录未解决问题到 progress.txt → 强制提交
+   - 自检已达 3 轮上限？→ 记录未解决 → 强制提交
+   - 本轮修改文件数 > contract scope 声明 ×2？→ **停止实现，提交当前状态**
+   - **只要 typecheck + lint 通过，就是交付条件。不要因为"还想优化一点"而延迟。**
+
+9. **Commit** — `feat: [Story ID] - [Story Title] (QA round: N/3)`
+   - 如果有未解决问题，在 commit body 中列出
+
+10. **更新 progress.txt** — 追加进度报告，包含：
+    - `[SELF-CHECK] 自检轮次: N/3, typecheck: PASS/FAIL, lint: PASS/FAIL`
+    - `[SCOPE] 修改文件 N 个，均属合同范围: file1, file2...`
+
+11. **更新 CLAUDE.md / AGENTS.md** — 如果发现可复用模式
+
+12. **宣告完成** — 执行 `echo "done" > .ralph/build-done`，然后回复 `<promise>COMPLETE</promise>`，停止。
 
 ### Commit 规则
 
-- 提交信息：`feat: [Story ID] - [Story Title]`
+- 提交信息：`feat: [Story ID] - [Story Title] (QA round: N/3)`
 - 只提交与当前故事相关的文件
 - 不要提交 contract.json
-- CI 不通过不提交
+- typecheck + lint 通过即可提交（不要求所有测试完美）
 
 ### Progress Report 格式
 
