@@ -826,14 +826,16 @@ for r in results[:5]:
         jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
       fi
       echo ""
-      echo "=== SUGGESTED SUBAGENTS ==="
-      echo "Consider using Task tool to invoke subagents:"
-      echo "  - code-reviewer: Review code changes for quality (suggested after implementation)"
-      echo "  - security-reviewer: Audit security-sensitive code"
-      echo "  - tdd-guide: Validate test quality and coverage"
+      echo "=== REQUIRED SUBAGENTS (MUST invoke at least one) ==="
+      echo "You MUST invoke at least one subagent using Task tool before submission:"
+      echo "  - code-reviewer: MUST call after every implementation. Review code quality, potential bugs, pattern consistency."
+      echo "  - security-reviewer: MUST call if auth/crypto/user-input/API-keys/database involved."
+      echo "  - tdd-guide: MUST call if story includes test files."
+      echo "  - e2e-runner: MUST call if UI interaction and Playwright MCP configured."
+      echo "Failure to invoke a subagent before submission → Evaluator will deduct points."
       ;;
     evaluator-contract)
-      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "When reviewing the contract, verify that Generator-cited tools exist in the index. Search: python3 scripts/search_index.py"
+      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Verify Generator-cited tools exist in the index using BM25-first chain:" && echo "  Step 1 (BM25): python3 scripts/match_skills.py --name \"<tool>\" / match_cli.py --name \"<tool>\"" && echo "  Step 2 (MCP):  python3 scripts/search_index.py --type mcp --keyword \"<function>\"" && echo "  Step 3 (confirm): python3 scripts/search_index.py --type skill --name \"<exact name>\""
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== PROPOSED CONTRACT ===" && cat "$CONTRACT_FILE"
       [ -f "${RALPH_DIR}/contract-scores.txt" ] && echo "" && echo "=== ROUND HISTORY ===" && cat "${RALPH_DIR}/contract-scores.txt"
       ;;
@@ -845,11 +847,13 @@ for r in results[:5]:
         jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
       fi
       echo ""
-      echo "=== SUGGESTED SUBAGENTS ==="
-      echo "Consider using Task tool to invoke subagents during evaluation:"
-      echo "  - code-reviewer: Review Generator's code changes"
-      echo "  - security-reviewer: Audit security-sensitive changes"
-      echo "  - e2e-runner: Run automated browser tests for UI stories"
+      echo "=== REQUIRED SUBAGENTS (MUST invoke before submitting evaluation) ==="
+      echo "You MUST invoke subagents before submitting evaluation results:"
+      echo "  - code-reviewer: MUST call every evaluation. Issues feed into codeQuality scoring."
+      echo "  - security-reviewer: MUST call if auth/crypto/user-input/API-keys/database/payment involved."
+      echo "  - e2e-runner: MUST call if UI interaction and Playwright MCP configured."
+      echo "  - silent-failure-hunter: MUST call every evaluation. Check for silent failures, swallowed errors, improper degradation."
+      echo "Failure to invoke → document reason in evaluation.json feedback, otherwise evaluation itself is in violation."
       ;;
     evaluator-user-resolution)
       [ -f "${RALPH_DIR}/user-resolution.md" ] && echo "" && echo "=== USER RESOLUTION ===" && cat "${RALPH_DIR}/user-resolution.md"
@@ -1279,18 +1283,18 @@ generate_audit_report() {
 
   # Find stories that passed with very low scores (possible leniency)
   local low_score_passes
-  low_score_passes=$(jq -r '[.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 65)] | length' "$PRD_FILE")
+  low_score_passes=$(jq -r '[.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 75)] | length' "$PRD_FILE")
   if [ "$low_score_passes" -gt 0 ]; then
-    echo "  WARNING: $low_score_passes story(s) passed with score < 65 (possible evaluator leniency):"
-    jq -r '.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 65) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
+    echo "  WARNING: $low_score_passes story(s) passed with score < 75 (possible evaluator leniency):"
+    jq -r '.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 75) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
   fi
 
   # Find stories that failed despite high scores (possible evaluator strictness)
   local high_score_fails
-  high_score_fails=$(jq -r '[.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 70)] | length' "$PRD_FILE")
+  high_score_fails=$(jq -r '[.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 85)] | length' "$PRD_FILE")
   if [ "$high_score_fails" -gt 0 ]; then
-    echo "  NOTE: $high_score_fails story(s) failed despite score >= 70 (possible evaluator strictness):"
-    jq -r '.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 70) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
+    echo "  NOTE: $high_score_fails story(s) failed despite score >= 85 (possible evaluator strictness):"
+    jq -r '.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 85) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
   fi
 
   # Summary statistics

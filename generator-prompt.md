@@ -69,7 +69,7 @@
 
 ### 强制规则
 
-1. **按验收标准选择工具。** 阅读验收标准，判断需要什么工具来验证。浏览器 UI 测试 → 使用已配置的浏览器 MCP 工具（如 Playwright）。API 测试 → curl/httpie。数据库验证 → 对应 CLI。**禁止用"代码看起来正确"或"typecheck 通过"代替实测。**
+1. **按验收标准选择工具。** 阅读验收标准，判断需要什么工具来验证。浏览器 UI 测试 → 使用已配置的浏览器 MCP 工具（如 Playwright）。API 测试 → curl/httpie。数据库验证 → 对应 CLI。**禁止仅凭 typecheck 通过就认为功能正确——必须实际运行验证。** typecheck 是代码质量检查（类型/语法），不能替代功能实测（应用启动、UI交互、API响应）。
 
 2. **CLI优先于MCP（Harness 硬性约束）。**
    - 当同一功能既有CLI工具又有MCP工具时，**只使用CLI工具**。
@@ -120,17 +120,31 @@ suggestion: <建议手动安装的命令>
 3. `.ralph/contract.json`（如存在）— 了解当前契约状态
 4. `.ralph/evaluation.json`（如存在）— 了解上次评估失败的原因（仅 build 阶段需要）
 
-5. **[REQUIRED] 搜索索引表** — 执行 python3 scripts/search_index.py 查找可用技能和 CLI 工具。合同阶段：搜索与当前故事相关的 skill 和验证工具。Build 阶段：搜索实现相关的开发类/测试类 skill。**禁止跳过此步骤**。未搜索索引表就写合同/实现 = 违反流程。
+5. **[REQUIRED] 搜索索引表（BM25 主力 → 精确确认）** — 
+   - 先用 `python3 scripts/match_skills.py --json --top-k 5 "<任务描述>"` 做 BM25 语义搜索发现 skill
+   - 再用 `python3 scripts/match_cli.py --json --top-k 3 "<CLI查询>"` 搜索 CLI 工具
+   - 仅精确确认时用 `python3 scripts/search_index.py --type <type> --name "<名称>"`
+   - 合同阶段：搜索与当前故事相关的 skill 和验证工具。Build 阶段：搜索实现相关的开发类/测试类 skill。
+   - **禁止跳过此步骤**。未搜索索引表就写合同/实现 = 违反流程。
 
 ---
 
 ### 索引表参考（Index Table Reference）
 
-如果上下文中有 "SEARCH INDEX" 部分，说明 Harness 项目提供了 `scripts/search_index.py` 工具来搜索索引表：
-- `--type skill` — 搜索 ~700 技能（来源：claude-skills-main + ECC + OpenCLI），支持 `--keyword`、`--category`、`--phase`、`--name`、`--format detail`
-- `--type cli` — 搜索 CLI 工具（来源：原生CLI + OpenCLI 转化的 MCP 工具），支持 `--keyword`、`--category`、`--name`
-- `--type mcp` — 搜索 ~2400 MCP 服务器（Awesome MCP Servers 目录）
-- ⚠️ **禁止** cat 原始 JSON 文件（~360KB）；用 search_index.py 按需搜索
+如果上下文中有 "SEARCH INDEX" 部分，说明 Harness 项目提供了索引搜索工具。**BM25 优先链（必须按此顺序）：**
+
+**Step 1 — BM25 语义搜索（发现工具）：**
+- `python3 scripts/match_skills.py --json --top-k 5 "<自然语言查询>"` — 搜索 ~700 技能
+- `python3 scripts/match_cli.py --json --top-k 3 "<功能查询>"` — 搜索 CLI 工具（含原生 CLI + OpenCLI 转化的 MCP）
+- BM25 算法按语义相关性排序，优先返回最匹配的结果
+
+**Step 2 — 精确确认（仅按需）：**
+- `python3 scripts/search_index.py --type skill --name "<exact name>"` — 验证特定 skill 是否存在
+- `python3 scripts/search_index.py --type cli --name "<exact name>"` — 验证特定 CLI 工具是否存在
+- `python3 scripts/search_index.py --type mcp --keyword "<关键词>"` — 搜索 ~2400 MCP 服务器目录
+
+**⚠️ 禁止** cat 原始 JSON 文件（match-index.json ~1.3MB, cli-match-index.json ~5.4MB），用脚本按需搜索。
+**⚠️ `search_index.py` 只用 `--name` 做精确确认，不用 `--keyword` 做模糊发现（BM25 更准）。**
 
 ---
 
@@ -159,7 +173,7 @@ suggestion: <建议手动安装的命令>
 2. 搜索相关库/框架的 API 文档（如 "React useSearchParams example 2026"）
 3. 搜索该领域常见陷阱
 
-使用 WebSearch 工具，最多 3 次搜索。
+**注意：DeepSeek API 不兼容内置 WebSearch/WebFetch 工具。** 网络搜索必须使用 Exa MCP（`mcp__plugin_ecc_exa__web_search_exa`）或 GitHub 代码搜索（`mcp__github__search_code`），最多 3 次搜索。
 
 ### Step 2.5: [REQUIRED] 搜索索引表（合同起草前，BM25 主力）
 
@@ -176,7 +190,11 @@ suggestion: <建议手动安装的命令>
    `python3 scripts/match_cli.py --json --top-k 3 "<结合 skill 提示的 CLI 查询>"`
    从 Top-3 中选 1 个最相关 CLI 工具。
 
-3. **精确确认（仅按需）**：
+3. **MCP 工具搜索**：
+   `python3 scripts/search_index.py --type mcp --keyword "<功能关键词>"`
+   如 MCP 工具尚未被 OpenCLI 转化为 CLI，通过 OpenCLI 将其转化为 CLI 后使用（CLI > MCP 硬约束）。
+
+4. **精确确认（仅按需）**：
    `python3 scripts/search_index.py --type skill --name "<exact name>"`
    `python3 scripts/search_index.py --type cli --name "<exact name>"`
    仅验证特定工具是否存在，不用于发现。
@@ -184,6 +202,7 @@ suggestion: <建议手动安装的命令>
 **规则：**
 - 合同中的 `verificationSteps` 只引用经上述流程确认存在的工具
 - 不假设某个 tool 或 skill 存在——必须搜索确认
+- MCP 工具优先通过 OpenCLI 转化为 CLI 使用（CLI > MCP）
 - 在合同 `history[].message` 中注明查阅了索引表
 
 ### Step 3: 起草合同
@@ -246,11 +265,33 @@ suggestion: <建议手动安装的命令>
 3. **Checkout 正确分支** — 从 prd.json 的 `branchName`
 3.5 **[REQUIRED] 搜索可用的实现工具（BM25 主力）：**
 
-  **必须执行（至少 3 次搜索）**，在 `progress.txt` 中记录搜索结果：
-  1. `python3 scripts/match_skills.py --json --top-k 5 "<任务关键词>"` — BM25 搜索技能
-  2. Read 2-3 个最相关 SKILL.md，提取其中提示的 CLI 工具需求
-  3. `python3 scripts/match_cli.py --json --top-k 3 "<CLI功能查询>"` — BM25 搜索 CLI
-  4. 仅精确确认时：`python3 scripts/search_index.py --type cli --name "<工具名>"`
+   **目的：** 了解项目中有哪些可用的开发/测试 skill 和 CLI 工具，避免用错误的方式实现。
+
+   **搜索流程（BM25 发现 → MCP 补充 → 精确确认）：**
+
+   1. **Skill 搜索（BM25 主力）**：
+      `python3 scripts/match_skills.py --json --top-k 5 "<任务关键词>"`
+      从 Top-5 中选 2-3 个最相关，Read 其 file_path 加载完整 SKILL.md。
+      Skill 可能提示额外 CLI 工具需求 → 记录到下一步。
+
+   2. **CLI 搜索（BM25 主力）**：
+      `python3 scripts/match_cli.py --json --top-k 3 "<结合 skill 提示的 CLI 查询>"`
+      从 Top-3 中选 1 个最相关 CLI 工具。
+
+   3. **MCP 工具搜索**：
+      `python3 scripts/search_index.py --type mcp --keyword "<功能关键词>"`
+      如 MCP 工具尚未被 OpenCLI 转化为 CLI，通过 OpenCLI 将其转化为 CLI 后使用（CLI > MCP 硬约束）。
+
+   4. **精确确认（仅按需）**：
+      `python3 scripts/search_index.py --type skill --name "<exact name>"`
+      `python3 scripts/search_index.py --type cli --name "<exact name>"`
+      仅验证特定工具是否存在，不用于发现。
+
+   **规则：**
+   - **至少 3 次搜索**（skill + CLI + MCP 各一次）
+   - 实现时只使用经上述流程确认存在的工具
+   - 不假设某个 tool 或 skill 存在——必须搜索确认
+   - 在 `progress.txt` 中记录每次搜索结果："[SEARCH] match_skills '<query>' → Top-3: ..."
 
 3.6 **[REQUIRED] 确认修改范围** — `git diff --name-only HEAD` 列出修改文件，与 contract.json proposedScope 对比：
    - 修改文件超出合同范围？→ git checkout 回退额外文件，或更新合同 scope
@@ -295,15 +336,15 @@ suggestion: <建议手动安装的命令>
 
    Evaluator 会因以下低级错误直接扣分：应用启动崩溃、验收标准未实测、类型错误、空页面、控制台报错。在交给 Evaluator 前修复这些问题是最低成本的得分方式。
 
-7. **Subagent 调用（建议）** — 以下 subagent 可帮助提高代码质量，建议在提交前按需调用：
+7. **Subagent 调用（必须）** — 提交前必须至少调用以下 subagent 中的 1 个：
 
-   - **code-reviewer**：审查代码质量、潜在 bug、模式一致性。建议每次实现后调用。
+   - **code-reviewer**：审查代码质量、潜在 bug、模式一致性。每次实现后必须调用。
      调用：Task(subagent_type="code-reviewer", prompt="审查本故事的代码变更...")
-   - **security-reviewer**：如涉及认证/授权/加密/用户输入/API密钥/数据库查询，建议调用安全审查。
-   - **tdd-guide**：如本故事包含测试文件，建议调用验证测试质量。
-   - **e2e-runner**：如涉及 UI 交互且已配置 Playwright MCP，建议执行端到端测试。
+   - **security-reviewer**：如涉及认证/授权/加密/用户输入/API密钥/数据库查询，必须调用安全审查。
+   - **tdd-guide**：如本故事包含测试文件，必须调用验证测试质量。
+   - **e2e-runner**：如涉及 UI 交互且已配置 Playwright MCP，必须执行端到端测试。
 
-   调用结果记录在 progress.txt 中。
+   调用结果记录在 progress.txt 中。未调用 subagent 直接提交 → Evaluator 扣分。
 
 8. **[DELIVERY GATE] 交付判断** — 在 commit 前执行：
    - typecheck 通过 + lint 通过？→ **立即提交，不要犹豫**
