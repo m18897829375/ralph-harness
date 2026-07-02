@@ -1283,18 +1283,18 @@ generate_audit_report() {
 
   # Find stories that passed with very low scores (possible leniency)
   local low_score_passes
-  low_score_passes=$(jq -r '[.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 75)] | length' "$PRD_FILE")
+  low_score_passes=$(jq -r '[.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 70)] | length' "$PRD_FILE")
   if [ "$low_score_passes" -gt 0 ]; then
-    echo "  WARNING: $low_score_passes story(s) passed with score < 75 (possible evaluator leniency):"
-    jq -r '.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 75) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
+    echo "  WARNING: $low_score_passes story(s) passed with score < 70 (possible evaluator leniency):"
+    jq -r '.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 70) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
   fi
 
   # Find stories that failed despite high scores (possible evaluator strictness)
   local high_score_fails
-  high_score_fails=$(jq -r '[.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 85)] | length' "$PRD_FILE")
+  high_score_fails=$(jq -r '[.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 80)] | length' "$PRD_FILE")
   if [ "$high_score_fails" -gt 0 ]; then
-    echo "  NOTE: $high_score_fails story(s) failed despite score >= 85 (possible evaluator strictness):"
-    jq -r '.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 85) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
+    echo "  NOTE: $high_score_fails story(s) failed despite score >= 80 (possible evaluator strictness):"
+    jq -r '.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 80) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
   fi
 
   # Summary statistics
