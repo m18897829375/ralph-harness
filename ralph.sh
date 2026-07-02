@@ -656,18 +656,39 @@ assemble_agent_context() {
   local role="${RALPH_ROLE:-unknown}"
   case "$role" in
     generator)
-      echo ""
-      echo "=== ROLE CONSTRAINT: GENERATOR ==="
-      echo "You are acting as the **Generator** role."
-      echo "Your responsibility: IMPLEMENT code according to the locked contract."
-      echo "Hard constraints:"
-      echo "  - You CREATE and MODIFY source code files."
-      echo "  - You MUST use match_skills.py (BM25) to find development skills, then match_cli.py (BM25) for CLI. Use search_index.py --name only for exact confirmation."
-      echo "  - You NEVER evaluate your own code as 'correct' -- the Evaluator judges."
-      echo "  - You NEVER modify locked contract.json."
-      echo "  - You MUST complete the Pre-QA checklist before committing."
-      echo "  - If in contract phase, your ONLY output is contract.json."
-      echo "CLI > MCP for tool selection (Harness Constraint)."
+      local role_phase
+      role_phase=$(cat "$PHASE_FILE" 2>/dev/null)
+      case "$role_phase" in
+        generator-contract)
+          echo ""
+          echo "=== ROLE CONSTRAINT: GENERATOR (CONTRACT PHASE) ==="
+          echo "⚠️  CRITICAL: You are in CONTRACT NEGOTIATION phase."
+          echo "Your SOLE permitted output is .ralph/contract.json."
+          echo "Hard constraints (phase violations = task failure):"
+          echo "  - You MUST NOT create, modify, edit, or delete ANY source code file (.ts/.tsx/.js/.py/.css/.html/.json except .ralph/contract.json)."
+          echo "  - You MUST NOT run: git add, git diff, git commit, npm run dev, npm install."
+          echo "  - You MUST NOT read source code files to 'prepare for implementation' — that is for build phase."
+          echo "  - You MAY only read: prd.json, progress.txt, .ralph/phase, .ralph/contract.json, .ralph/evaluation.json."
+          echo "  - You MAY only search: match_skills.py (BM25) for skill discovery, match_cli.py (BM25) for CLI tools."
+          echo "  - You MAY only write: .ralph/contract.json (status: proposed, never locked)."
+          echo "  - If Evaluator returns contract for revision → read their feedback in history, revise, set status back to proposed."
+          echo "Phase discipline: Contract phase is for NEGOTIATION, not implementation. Build phase comes AFTER contract is locked."
+          echo "CLI > MCP for tool selection (Harness Constraint)."
+          ;;
+        *)
+          echo ""
+          echo "=== ROLE CONSTRAINT: GENERATOR (BUILD PHASE) ==="
+          echo "You are acting as the **Generator** role."
+          echo "Your responsibility: IMPLEMENT code according to the locked contract."
+          echo "Hard constraints:"
+          echo "  - You CREATE and MODIFY source code files."
+          echo "  - You MUST use match_skills.py (BM25) to find development skills, then match_cli.py (BM25) for CLI. Use search_index.py --name only for exact confirmation."
+          echo "  - You NEVER evaluate your own code as 'correct' -- the Evaluator judges."
+          echo "  - You NEVER modify locked contract.json."
+          echo "  - You MUST complete the Pre-QA checklist before committing."
+          echo "CLI > MCP for tool selection (Harness Constraint)."
+          ;;
+      esac
       ;;
     evaluator)
       echo ""
