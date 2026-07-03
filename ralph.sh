@@ -691,18 +691,23 @@ assemble_agent_context() {
   esac
 
   # 3. Harness Index Tables — search via search_index.py
-  # Self-contained: look in SCRIPT_DIR first (ralph-harness bundled), then PROJECT_DIR (harness provided)
+  # Priority: HARNESS_ROOT (harness monorepo) > PROJECT_DIR > SCRIPT_DIR (ralph-harness standalone fallback)
+  local HARNESS_ROOT="$SCRIPT_DIR/../.."
   local SEARCH_SCRIPT=""
-  if [ -f "$SCRIPT_DIR/scripts/search_index.py" ]; then
-    SEARCH_SCRIPT="$SCRIPT_DIR/scripts/search_index.py"
+  if [ -f "$HARNESS_ROOT/scripts/search_index.py" ]; then
+    SEARCH_SCRIPT="$HARNESS_ROOT/scripts/search_index.py"
   elif [ -f "$PROJECT_DIR/scripts/search_index.py" ]; then
     SEARCH_SCRIPT="$PROJECT_DIR/scripts/search_index.py"
+  elif [ -f "$SCRIPT_DIR/scripts/search_index.py" ]; then
+    SEARCH_SCRIPT="$SCRIPT_DIR/scripts/search_index.py"
   fi
 
   # Detect where index JSON files live (multi-path)
   local INDEX_DIR=""
   if [ -n "$HARNESS_INDEX_DIR" ] && [ -d "$HARNESS_INDEX_DIR" ]; then
     INDEX_DIR="$HARNESS_INDEX_DIR"
+  elif [ -f "$HARNESS_ROOT/skill-index.json" ]; then
+    INDEX_DIR="$HARNESS_ROOT"
   elif [ -f "$(pwd)/skill-index.json" ]; then
     INDEX_DIR="$(pwd)"
   elif [ -f "$PROJECT_DIR/skill-index.json" ]; then
@@ -777,7 +782,9 @@ assemble_agent_context() {
       echo "=== PRE-SEARCH RESULTS ==="
       echo "Auto-searched top skills for story: $STORY_TITLE"
       echo ""
-      python3 "$SCRIPT_DIR/scripts/match_skills.py" --json --top-k 5 "$STORY_TITLE" 2>/dev/null | python3 -c "
+      local MATCH_CMD="$HARNESS_ROOT/scripts/match_skills.py"
+      [ -f "$MATCH_CMD" ] || MATCH_CMD="$SCRIPT_DIR/scripts/match_skills.py"
+      python3 "$MATCH_CMD" --json --top-k 5 "$STORY_TITLE" 2>/dev/null | python3 -c "
 import sys,json
 results=json.load(sys.stdin)
 for r in results[:5]:
@@ -900,9 +907,13 @@ run_agent() {
   esac
 
   # Detect index directory for HARNESS_INDEX_DIR env var
+  # Priority: HARNESS_INDEX_DIR > HARNESS_ROOT > pwd > PROJECT_DIR > SCRIPT_DIR
+  local HARNESS_ROOT="$SCRIPT_DIR/../.."
   local INDEX_DIR=""
   if [ -n "$HARNESS_INDEX_DIR" ] && [ -d "$HARNESS_INDEX_DIR" ]; then
     INDEX_DIR="$HARNESS_INDEX_DIR"
+  elif [ -f "$HARNESS_ROOT/skill-index.json" ]; then
+    INDEX_DIR="$HARNESS_ROOT"
   elif [ -f "$(pwd)/skill-index.json" ]; then
     INDEX_DIR="$(pwd)"
   elif [ -f "$PROJECT_DIR/skill-index.json" ]; then
