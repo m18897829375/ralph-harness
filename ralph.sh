@@ -666,12 +666,12 @@ assemble_agent_context() {
       echo "You are acting as the **Generator** role."
       echo "Your responsibility: IMPLEMENT code according to the locked contract."
       echo "Hard constraints:"
+      echo "  - You MUST execute match_skills.py (BM25) search and load 1-3 SKILL.md files BEFORE writing any code. Skipping this step = task failure."
       echo "  - You CREATE and MODIFY source code files."
-      echo "  - You MUST use match_skills.py (BM25) to find development skills, then match_cli.py (BM25) for CLI. Use search_index.py --name only for exact confirmation."
+      echo "  - You MUST use match_cli.py (BM25) after skill review for CLI tool discovery. Use search_index.py --name only for exact confirmation."
       echo "  - You NEVER evaluate your own code as 'correct' -- the Evaluator judges."
       echo "  - You NEVER modify locked contract.json."
       echo "  - You MUST complete the Pre-QA checklist before committing."
-      echo "  - If in contract phase, your ONLY output is contract.json."
       echo "CLI > MCP for tool selection (Harness Constraint)."
       ;;
     evaluator)
@@ -816,7 +816,14 @@ for r in results[:5]:
   # 5. Phase-specific files
   case "$phase" in
     generator-contract)
-      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Search index tables (BM25 first): match_skills.py for skills, match_cli.py for CLI, search_index.py --name for confirmation"
+      if [ -f "$SEARCH_SCRIPT" ]; then
+        echo ""
+        echo "=== REQUIRED PRE-CONTRACT SEARCH (execute BEFORE drafting contract) ==="
+        echo "Step 1: python3 scripts/match_skills.py --json --top-k 5 \"<task keywords>\""
+        echo "Step 2: Read 1-3 most relevant SKILL.md files"
+        echo "Step 3: python3 scripts/match_cli.py --json --top-k 3 \"<CLI query>\""
+        echo "Failure to execute BM25 search before drafting contract → Evaluator will reject contract."
+      fi
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== CURRENT CONTRACT ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION ==="
@@ -824,7 +831,15 @@ for r in results[:5]:
       fi
       ;;
     generator-build)
-      [ -f "$SEARCH_SCRIPT" ] && echo "" && echo "=== REMINDER ===" && echo "Before implementing, search index tables for relevant development skills and CLI tools."
+      if [ -f "$SEARCH_SCRIPT" ]; then
+        echo ""
+        echo "=== REQUIRED PRE-IMPLEMENTATION SEARCH (execute BEFORE writing any code) ==="
+        echo "Step 1: python3 scripts/match_skills.py --json --top-k 5 \"<task keywords>\""
+        echo "Step 2: Read 1-3 most relevant SKILL.md files (by file_path from results)"
+        echo "Step 3: python3 scripts/match_cli.py --json --top-k 3 \"<CLI query from skill hints>\""
+        echo "Step 4: Record in progress.txt: '[BM25] skills=(names), cli=(name)'"
+        echo "Failure to execute BM25 search before writing code → Evaluator will deduct points."
+      fi
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== LOCKED CONTRACT (DO NOT MODIFY) ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION FEEDBACK ==="
