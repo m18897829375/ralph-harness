@@ -633,18 +633,22 @@ wait_for_agent() {
 # Wait for a sentinel file (build/evaluate phases — no PID dependency).
 _wait_for_file() {
   local file="$1" phase_label="$2" desc="$3" pid="$4"
-  local elapsed=0 tick=60 timeout=7200
+  local elapsed=0 tick=60 timeout=7200 pid_dead=0
   rm -f "$file"
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
     # Normal completion: sentinel file appeared
     [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
-    # Agent process exited: it finished work but forgot to write the sentinel file
+    # Agent PID may be a pipeline wrapper that exits quickly while the real
+    # process (claude-tap) continues. Use grace period before acting on PID death.
     if ! _is_process_alive "$pid"; then
-      echo "  [$desc] Agent PID $pid exited without writing sentinel — auto-creating."
-      echo "done" > "$file"
-      return 0
+      pid_dead=$((pid_dead + 1))
+      if [ $pid_dead -ge 5 ]; then
+        echo "  [$desc] Agent PID $pid gone for ${pid_dead} cycles — auto-creating sentinel."
+        echo "done" > "$file"
+        return 0
+      fi
     fi
   done
   echo "  [TIMEOUT] $desc did not complete within $((timeout / 60)) min."
@@ -653,22 +657,28 @@ _wait_for_file() {
 
 # Wait for evaluation.json to appear with valid score.
 _wait_for_evaluation() {
-  local phase_label="$1" pid="$2" elapsed=0 tick=60 timeout=7200
+  local phase_label="$1" pid="$2" elapsed=0 tick=60 timeout=7200 pid_dead=0
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
+    # Normal completion: evaluation.json with valid score
     if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
       local s; s=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null || echo "-1")
       [ "$s" != "-1" ] && [ "$s" != "null" ] && echo "  Evaluation complete (score: $s, $((elapsed / 60)) min)." && return 0
     fi
-    # Agent exited: it finished but evaluation.json may be incomplete — still stop waiting
+    # Agent PID may be a pipeline wrapper that exits quickly.
+    # Use grace period (5 cycles) before concluding the agent is truly gone.
     if ! _is_process_alive "$pid"; then
-      echo "  [Evaluator] Agent PID $pid exited. Stopping wait."
-      if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
-        return 0
+      pid_dead=$((pid_dead + 1))
+      if [ $pid_dead -ge 5 ]; then
+        echo "  [Evaluator] Agent PID $pid gone for ${pid_dead} cycles."
+        if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
+          echo "  [Evaluator] evaluation.json present — accepting."
+          return 0
+        fi
+        echo "  [Evaluator] No evaluation.json after grace period — treating as incomplete."
+        return 1
       fi
-      echo "  [Evaluator] No evaluation.json — treating as incomplete."
-      return 1
     fi
   done
   echo "  [TIMEOUT] No evaluation.json after $((timeout / 60)) min."
