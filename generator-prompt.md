@@ -122,7 +122,7 @@ suggestion: <建议手动安装的命令>
 
 5. **[REQUIRED] 搜索索引表（BM25 主力 → 精确确认）** — 
    - 先用 `python3 scripts/match_skills.py --json --top-k 5 "<任务描述>"` 做 BM25 语义搜索发现 skill
-   - 再用 `python3 scripts/match_cli.py --json --top-k 3 "<CLI查询>"` 搜索 CLI 工具
+   - 再用 `python3 scripts/match_cli.py --json --top-k 10 "<CLI查询>"` 搜索 CLI 工具
    - 仅精确确认时用 `python3 scripts/search_index.py --type <type> --name "<名称>"`
    - 合同阶段：搜索与当前故事相关的 skill 和验证工具。Build 阶段：搜索实现相关的开发类/测试类 skill。
    - **禁止跳过此步骤**。未搜索索引表就写合同/实现 = 违反流程。
@@ -135,7 +135,7 @@ suggestion: <建议手动安装的命令>
 
 **Step 1 — BM25 语义搜索（发现工具）：**
 - `python3 scripts/match_skills.py --json --top-k 5 "<自然语言查询>"` — 搜索 ~700 技能
-- `python3 scripts/match_cli.py --json --top-k 3 "<功能查询>"` — 搜索 CLI 工具（含原生 CLI + OpenCLI 转化的 MCP）
+- `python3 scripts/match_cli.py --json --top-k 10 "<功能查询>"` — 搜索 CLI 工具（含原生 CLI + OpenCLI 转化的 MCP）
 - BM25 算法按语义相关性排序，优先返回最匹配的结果
 
 **Step 2 — 精确确认（仅按需）：**
@@ -187,8 +187,8 @@ suggestion: <建议手动安装的命令>
    Skill 可能提示额外 CLI 需求 → 记录到下一步。
 
 2. **CLI 搜索（BM25 主力）**：
-   `python3 scripts/match_cli.py --json --top-k 3 "<结合 skill 提示的 CLI 查询>"`
-   从 Top-3 中选 1 个最相关 CLI 工具。
+   `python3 scripts/match_cli.py --json --top-k 10 "<结合 skill 提示的 CLI 查询>"`
+   从搜索结果中选择所有需要的 CLI 工具（可多个，不同任务可能需要不同工具组合）。
 
 3. **MCP 工具搜索**：
    `python3 scripts/search_index.py --type mcp --keyword "<功能关键词>"`
@@ -265,6 +265,10 @@ suggestion: <建议手动安装的命令>
 3. **Checkout 正确分支** — 从 prd.json 的 `branchName`
 3.5 **[REQUIRED] 搜索可用的实现工具（BM25 主力）：**
 
+   **⚠️ 即使 Contract 阶段已经搜索过，Build 阶段也必须重新执行 BM25 搜索。**
+   实现阶段需要的 CLI 工具可能与合同阶段完全不同（例如合同阶段用 curl 验证 API，
+   实现阶段需要 git/npm/eslint）。不要复用之前的搜索结果。
+
    **目的：** 了解项目中有哪些可用的开发/测试 skill 和 CLI 工具，避免用错误的方式实现。
 
    **搜索流程（BM25 发现 → MCP 补充 → 精确确认）：**
@@ -275,8 +279,8 @@ suggestion: <建议手动安装的命令>
       Skill 可能提示额外 CLI 工具需求 → 记录到下一步。
 
    2. **CLI 搜索（BM25 主力）**：
-      `python3 scripts/match_cli.py --json --top-k 3 "<结合 skill 提示的 CLI 查询>"`
-      从 Top-3 中选 1 个最相关 CLI 工具。
+      `python3 scripts/match_cli.py --json --top-k 10 "<结合 skill 提示的 CLI 查询>"`
+      从搜索结果中选择所有需要的 CLI 工具（可多个，不同任务可能需要不同工具组合）。
 
    3. **MCP 工具搜索**：
       `python3 scripts/search_index.py --type mcp --keyword "<功能关键词>"`
@@ -288,7 +292,7 @@ suggestion: <建议手动安装的命令>
       仅验证特定工具是否存在，不用于发现。
 
    **规则：**
-   - **至少 3 次搜索**（skill + CLI + MCP 各一次）
+   - **至少 2 次搜索**（skill + CLI 至少各一次，MCP 按需搜索）
    - 实现时只使用经上述流程确认存在的工具
    - 不假设某个 tool 或 skill 存在——必须搜索确认
    - 在 `progress.txt` 中记录每次搜索结果："[SEARCH] match_skills '<query>' → Top-3: ..."

@@ -124,7 +124,7 @@ suggestion: <建议的手动安装命令>
 
 **Step 1 — BM25 语义搜索（发现工具）：**
 - `python3 scripts/match_skills.py --json --top-k 5 "<自然语言查询>"` — 搜索 ~700 技能
-- `python3 scripts/match_cli.py --json --top-k 3 "<功能查询>"` — 搜索 CLI 工具（含原生 CLI + OpenCLI 转化的 MCP）
+- `python3 scripts/match_cli.py --json --top-k 10 "<功能查询>"` — 搜索 CLI 工具（含原生 CLI + OpenCLI 转化的 MCP）
 - BM25 算法按语义相关性排序，优先返回最匹配的结果
 
 **Step 2 — 精确确认（仅按需）：**
@@ -208,7 +208,7 @@ suggestion: <建议的手动安装命令>
 1. 合同提到某 skill → `python3 scripts/match_skills.py --name "<skill名>"`（BM25 确认）
 2. 合同提到某 CLI 工具 → `python3 scripts/match_cli.py --name "<工具名>"`（BM25 确认）
 3. 工具不存在于索引表 → 在退回理由中明确指出，建议改用索引表中已有的替代工具
-4. 合同遗漏了明显可用的工具 → `python3 scripts/match_skills.py --json --top-k 5 "<功能>"` + `python3 scripts/match_cli.py --json --top-k 3 "<功能>"` 查找替代
+4. 合同遗漏了明显可用的工具 → `python3 scripts/match_skills.py --json --top-k 5 "<功能>"` + `python3 scripts/match_cli.py --json --top-k 10 "<功能>"` 查找替代
 5. 涉及 MCP → `python3 scripts/search_index.py --type mcp --keyword "<功能>"` 补充搜索
 
 **示例退回理由：**
@@ -306,8 +306,8 @@ suggestion: <建议的手动安装命令>
    加载 2-3 个最相关 SKILL.md。
 
 2. **搜索 CLI 验证工具（BM25 主力）**：
-   `python3 scripts/match_cli.py --json --top-k 3 "test <框架>"` — 测试类 CLI
-   `python3 scripts/match_cli.py --json --top-k 3 "lint typecheck"` — 代码质量 CLI
+   `python3 scripts/match_cli.py --json --top-k 10 "test <框架>"` — 测试类 CLI
+   `python3 scripts/match_cli.py --json --top-k 10 "lint typecheck"` — 代码质量 CLI
 
 3. **搜索 MCP 服务（如需浏览器/API 测试）**：
    `python3 scripts/search_index.py --type mcp --keyword "<功能>"`

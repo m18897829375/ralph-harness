@@ -118,6 +118,31 @@ fi
 # ============================================================
 # SCRIPT_DIR: where Ralph's own files live (generator-prompt.md, evaluator-prompt.md, etc.)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Walk up from SCRIPT_DIR to find harness monorepo root.
+# Identified by the presence of BOTH: skill-index.json + scripts/search_index.py.
+# This replaces the fragile "$SCRIPT_DIR/../.." hardcode that assumed
+# ralph-harness is always at <root>/subprojects/ralph-harness/.
+_find_harness_root() {
+  local dir="$SCRIPT_DIR"
+  while [ "$dir" != "/" ] && [ "$dir" != "." ]; do
+    if [ -f "$dir/skill-index.json" ] && [ -f "$dir/scripts/search_index.py" ]; then
+      echo "$dir"
+      return 0
+    fi
+    dir="$(dirname "$dir")"
+  done
+  # Last resort: try known relative position for backwards compatibility
+  local candidate
+  candidate="$(cd "$SCRIPT_DIR/../.." 2>/dev/null && pwd)"
+  if [ -f "$candidate/skill-index.json" ] && [ -f "$candidate/scripts/search_index.py" ]; then
+    echo "$candidate"
+    return 0
+  fi
+  return 1
+}
+HARNESS_ROOT="$(_find_harness_root)" || HARNESS_ROOT=""
+
 # PROJECT_DIR: the user's project root (where prd.json and progress.txt live)
 # Defaults to current working directory — works for both standalone and submodule usage.
 # Override with RALPH_PROJECT_DIR env var if needed.
@@ -666,7 +691,7 @@ assemble_agent_context() {
       echo "You are acting as the **Generator** role."
       echo "Your responsibility: IMPLEMENT code according to the locked contract."
       echo "Hard constraints:"
-      echo "  - You MUST execute match_skills.py (BM25) search and load 1-3 SKILL.md files BEFORE writing any code. Skipping this step = task failure."
+      echo "  - You MUST execute match_skills.py (BM25) search at the START of EVERY phase. Even if you searched in a previous phase, re-execute — implementation may need different tools than contract drafting. Load 2-3 SKILL.md files BEFORE writing any code. Skipping this step = task failure."
       echo "  - You CREATE and MODIFY source code files."
       echo "  - You MUST use match_cli.py (BM25) after skill review for CLI tool discovery. Use search_index.py --name only for exact confirmation."
       echo "  - You NEVER evaluate your own code as 'correct' -- the Evaluator judges."
@@ -681,7 +706,7 @@ assemble_agent_context() {
       echo "Your responsibility: VERIFY and SCORE the Generator's implementation."
       echo "Hard constraints:"
       echo "  - You NEVER create or modify source code files."
-      echo "  - You MUST use match_skills.py (BM25) to find verification skills, then match_cli.py (BM25) for CLI. Use search_index.py --name only for exact confirmation."
+      echo "  - You MUST execute match_skills.py (BM25) search at the START of EVERY phase for verification skills, then match_cli.py (BM25) for CLI tools. Use search_index.py --name only for exact confirmation. Do not skip even if you searched in a previous phase."
       echo "  - You MUST test in the browser for UI stories -- code reading is not enough."
       echo "  - You MUST produce evaluation.json with complete verifiedCriteria evidence."
       echo "  - Every criterion gets PASS or FAIL with concrete evidence."
@@ -691,29 +716,22 @@ assemble_agent_context() {
   esac
 
   # 3. Harness Index Tables — search via search_index.py
-  # Priority: HARNESS_ROOT (harness monorepo) > PROJECT_DIR > SCRIPT_DIR (ralph-harness standalone fallback)
-  local HARNESS_ROOT="$SCRIPT_DIR/../.."
+  # HARNESS_ROOT is resolved globally via _find_harness_root() (walks up from SCRIPT_DIR)
   local SEARCH_SCRIPT=""
   if [ -f "$HARNESS_ROOT/scripts/search_index.py" ]; then
     SEARCH_SCRIPT="$HARNESS_ROOT/scripts/search_index.py"
   elif [ -f "$PROJECT_DIR/scripts/search_index.py" ]; then
     SEARCH_SCRIPT="$PROJECT_DIR/scripts/search_index.py"
-  elif [ -f "$SCRIPT_DIR/scripts/search_index.py" ]; then
-    SEARCH_SCRIPT="$SCRIPT_DIR/scripts/search_index.py"
   fi
 
-  # Detect where index JSON files live (multi-path)
+  # Detect where index JSON files live
   local INDEX_DIR=""
   if [ -n "$HARNESS_INDEX_DIR" ] && [ -d "$HARNESS_INDEX_DIR" ]; then
     INDEX_DIR="$HARNESS_INDEX_DIR"
   elif [ -f "$HARNESS_ROOT/skill-index.json" ]; then
     INDEX_DIR="$HARNESS_ROOT"
-  elif [ -f "$(pwd)/skill-index.json" ]; then
-    INDEX_DIR="$(pwd)"
   elif [ -f "$PROJECT_DIR/skill-index.json" ]; then
     INDEX_DIR="$PROJECT_DIR"
-  elif [ -f "$SCRIPT_DIR/skill-index.json" ]; then
-    INDEX_DIR="$SCRIPT_DIR"
   fi
 
   if [ -f "$SEARCH_SCRIPT" ]; then
@@ -721,6 +739,16 @@ assemble_agent_context() {
       echo ""
       echo "Index files found at: $INDEX_DIR (HARNESS_INDEX_DIR already set)"
     fi
+
+    # Compute absolute paths for scripts referenced in agent instructions
+    local SKILL_CMD="${INDEX_DIR:+$INDEX_DIR/scripts/match_skills.py}"
+    local CLI_CMD="${INDEX_DIR:+$INDEX_DIR/scripts/match_cli.py}"
+    local INDEX_CMD="${INDEX_DIR:+$INDEX_DIR/scripts/search_index.py}"
+    # Fallback to relative paths if INDEX_DIR not set (standalone without harness)
+    [ -z "$SKILL_CMD" ] && SKILL_CMD="scripts/match_skills.py"
+    [ -z "$CLI_CMD" ] && CLI_CMD="scripts/match_cli.py"
+    [ -z "$INDEX_CMD" ] && INDEX_CMD="scripts/search_index.py"
+
     echo ""
     echo "=== SEARCH INDEX (BM25 Semantic Search) ==="
     echo "Use match_skills.py and match_cli.py for primary search."
@@ -729,29 +757,29 @@ assemble_agent_context() {
     echo ""
 
     echo "--- Step 1: Skill Search (BM25, recommended) ---"
-    echo "  python3 scripts/match_skills.py --json --top-k 5 \"<natural language query>\""
-    echo "  Example: python3 scripts/match_skills.py --json --top-k 5 \"React login form with JWT\""
+    echo "  python3 $SKILL_CMD --json --top-k 5 \"<natural language query>\""
+    echo "  Example: python3 $SKILL_CMD --json --top-k 5 \"React login form with JWT\""
     echo "  Returns: name, score, description_preview, file_path"
     echo "  Then: Read 2-3 most relevant SKILL.md files (top scoring)"
     echo "  Then: Skill may suggest additional CLI tools to search in Step 2"
     echo ""
 
     echo "--- Step 2: CLI Search (BM25, after skill review) ---"
-    echo "  python3 scripts/match_cli.py --json --top-k 3 \"<query>\""
-    echo "  Example: python3 scripts/match_cli.py --json --top-k 3 \"curl post api test\""
+    echo "  python3 $CLI_CMD --json --top-k 10 \"<query>\""
+    echo "  Example: python3 $CLI_CMD --json --top-k 10 \"curl post api test\""
     echo "  Results marked: [CLI]=native CLI, [OpenCLI]=converted, [MCP→CLI]=needs conversion"
-    echo "  Choose 1 most relevant CLI tool (unlike skills, CLI tools don't complement each other)"
+    echo "  Choose all relevant CLI tools needed for this task (may require more than one)"
     echo ""
 
     echo "--- Step 3: Exact Name Confirmation (only when needed) ---"
-    echo "  python3 $SEARCH_SCRIPT --type skill --name \"<exact name>\""
-    echo "  python3 $SEARCH_SCRIPT --type cli --name \"<exact name>\""
-    echo "  python3 $SEARCH_SCRIPT --type mcp --name \"<exact name>\""
+    echo "  python3 $INDEX_CMD --type skill --name \"<exact name>\""
+    echo "  python3 $INDEX_CMD --type cli --name \"<exact name>\""
+    echo "  python3 $INDEX_CMD --type mcp --name \"<exact name>\""
     echo "  Use ONLY for verifying a specific tool exists — NOT for discovery"
     echo ""
 
     echo "--- MCP Server Lookup ---"
-    echo "  python3 $SEARCH_SCRIPT --type mcp --keyword \"<function>\""
+    echo "  python3 $INDEX_CMD --type mcp --keyword \"<function>\""
     echo ""
 
     echo "--- Tool Priority: CLI > MCP (Harness Constraint) ---"
@@ -760,7 +788,7 @@ assemble_agent_context() {
     echo ""
 
     echo "--- Workflow Summary ---"
-    echo "  match_skills.py (BM25) → load 2-3 SKILL.md → match_cli.py (BM25) → pick 1 CLI"
+    echo "  match_skills.py (BM25) → load 2-3 SKILL.md → match_cli.py (BM25) → prepare needed CLIs"
     echo "  search_index.py --name only for exact confirmation (NOT discovery)"
     echo ""
 
@@ -783,7 +811,7 @@ assemble_agent_context() {
       echo "Auto-searched top skills for story: $STORY_TITLE"
       echo ""
       local MATCH_CMD="$HARNESS_ROOT/scripts/match_skills.py"
-      [ -f "$MATCH_CMD" ] || MATCH_CMD="$SCRIPT_DIR/scripts/match_skills.py"
+      [ -f "$MATCH_CMD" ] || MATCH_CMD="$INDEX_DIR/scripts/match_skills.py"
       python3 "$MATCH_CMD" --json --top-k 5 "$STORY_TITLE" 2>/dev/null | python3 -c "
 import sys,json
 results=json.load(sys.stdin)
@@ -792,8 +820,8 @@ for r in results[:5]:
 " 2>/dev/null || echo "(pre-search unavailable)"
       echo ""
       echo "Read 2-3 most relevant SKILL.md files from above, then:"
-      echo "  python3 scripts/match_cli.py --json --top-k 3 \"<CLI query from skill hints>\""
-      echo "  python3 scripts/search_index.py --type skill --name \"<name>\"  (exact confirmation only)"
+      echo "  python3 $INDEX_DIR/scripts/match_cli.py --json --top-k 10 \"<CLI query from skill hints>\""
+      echo "  python3 $INDEX_DIR/scripts/search_index.py --type skill --name \"<name>\"  (exact confirmation only)"
       echo ""
     fi
   fi
@@ -828,7 +856,7 @@ for r in results[:5]:
         echo "=== REQUIRED PRE-CONTRACT SEARCH (execute BEFORE drafting contract) ==="
         echo "Step 1: python3 scripts/match_skills.py --json --top-k 5 \"<task keywords>\""
         echo "Step 2: Read 1-3 most relevant SKILL.md files"
-        echo "Step 3: python3 scripts/match_cli.py --json --top-k 3 \"<CLI query>\""
+        echo "Step 3: python3 scripts/match_cli.py --json --top-k 10 \"<CLI query>\""
         echo "Failure to execute BM25 search before drafting contract → Evaluator will reject contract."
       fi
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== CURRENT CONTRACT ===" && cat "$CONTRACT_FILE"
@@ -843,7 +871,7 @@ for r in results[:5]:
         echo "=== REQUIRED PRE-IMPLEMENTATION SEARCH (execute BEFORE writing any code) ==="
         echo "Step 1: python3 scripts/match_skills.py --json --top-k 5 \"<task keywords>\""
         echo "Step 2: Read 1-3 most relevant SKILL.md files (by file_path from results)"
-        echo "Step 3: python3 scripts/match_cli.py --json --top-k 3 \"<CLI query from skill hints>\""
+        echo "Step 3: python3 scripts/match_cli.py --json --top-k 10 \"<CLI query from skill hints>\""
         echo "Step 4: Record in progress.txt: '[BM25] skills=(names), cli=(name)'"
         echo "Failure to execute BM25 search before writing code → Evaluator will deduct points."
       fi
@@ -907,19 +935,14 @@ run_agent() {
   esac
 
   # Detect index directory for HARNESS_INDEX_DIR env var
-  # Priority: HARNESS_INDEX_DIR > HARNESS_ROOT > pwd > PROJECT_DIR > SCRIPT_DIR
-  local HARNESS_ROOT="$SCRIPT_DIR/../.."
+  # HARNESS_ROOT is resolved globally via _find_harness_root()
   local INDEX_DIR=""
   if [ -n "$HARNESS_INDEX_DIR" ] && [ -d "$HARNESS_INDEX_DIR" ]; then
     INDEX_DIR="$HARNESS_INDEX_DIR"
   elif [ -f "$HARNESS_ROOT/skill-index.json" ]; then
     INDEX_DIR="$HARNESS_ROOT"
-  elif [ -f "$(pwd)/skill-index.json" ]; then
-    INDEX_DIR="$(pwd)"
   elif [ -f "$PROJECT_DIR/skill-index.json" ]; then
     INDEX_DIR="$PROJECT_DIR"
-  elif [ -f "$SCRIPT_DIR/skill-index.json" ]; then
-    INDEX_DIR="$SCRIPT_DIR"
   fi
 
   if [[ "$TOOL" == "amp" ]]; then
