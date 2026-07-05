@@ -638,7 +638,14 @@ _wait_for_file() {
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
+    # Normal completion: sentinel file appeared
     [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
+    # Agent process exited: it finished work but forgot to write the sentinel file
+    if ! _is_process_alive "$pid"; then
+      echo "  [$desc] Agent PID $pid exited without writing sentinel — auto-creating."
+      echo "done" > "$file"
+      return 0
+    fi
   done
   echo "  [TIMEOUT] $desc did not complete within $((timeout / 60)) min."
   return 1
@@ -653,6 +660,15 @@ _wait_for_evaluation() {
     if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
       local s; s=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null || echo "-1")
       [ "$s" != "-1" ] && [ "$s" != "null" ] && echo "  Evaluation complete (score: $s, $((elapsed / 60)) min)." && return 0
+    fi
+    # Agent exited: it finished but evaluation.json may be incomplete — still stop waiting
+    if ! _is_process_alive "$pid"; then
+      echo "  [Evaluator] Agent PID $pid exited. Stopping wait."
+      if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
+        return 0
+      fi
+      echo "  [Evaluator] No evaluation.json — treating as incomplete."
+      return 1
     fi
   done
   echo "  [TIMEOUT] No evaluation.json after $((timeout / 60)) min."
