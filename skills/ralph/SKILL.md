@@ -292,7 +292,14 @@ For each entry in `techStack`, look up the matching rule directory:
 Copy files and strip YAML `paths` frontmatter:
 
 ```bash
-# Step 1: Copy rules
+# Step 0: Clean old language rules (prevent stale rules when techStack changes)
+# Only deletes known ECC language dirs — custom rules in .claude/rules/ are safe
+KNOWN_LANGS="typescript react python golang java kotlin rust swift php ruby angular cpp csharp dart fsharp perl arkts web"
+for lang in $KNOWN_LANGS; do
+  rm -rf <PROJECT_ROOT>/.claude/rules/$lang/
+done
+
+# Step 1: Copy new rules for current techStack
 cp -r subprojects/everything-claude-code/rules/<matched-dir> <PROJECT_ROOT>/.claude/rules/<matched-dir>/
 
 # Step 2: Strip YAML frontmatter (paths scoping prevents startup loading)
