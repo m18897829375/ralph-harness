@@ -258,11 +258,11 @@ Add ability to mark tasks with different statuses.
 
 ## Rules Setup: Copy ECC Language Rules Based on techStack
 
-**After writing `prd.json`**, read the `techStack` field and copy matching language rules from the ECC subproject to the **project root's** `.claude/rules/ecc/` directory. This ensures gen/eva agents follow language-specific conventions.
+**After writing `prd.json`**, read the `techStack` field and copy matching language rules from the ECC subproject to the **project root's** `.claude/rules/` directory. Claude Code auto-discovers all `.md` files under `.claude/rules/` recursively and loads them at session start.
 
 ### ⚠️ Do NOT Copy Common Rules
 
-Common rules (`coding-style.md`, `testing.md`, `security.md`, `git-workflow.md`, `code-review.md`, `hooks.md`, `patterns.md`, `performance.md`, `agents.md`, `development-workflow.md`) are already inherited from the **user-level** `~/.claude/rules/ecc/common/`. Claude Code automatically loads them for every session. Copying them to the project level is redundant and wastes context window tokens.
+Common rules are already inherited from the **user-level** `~/.claude/rules/ecc/common/`. Claude Code loads them for every session. Copying to project level is redundant.
 
 ### Copy Language Rules by techStack
 
@@ -289,30 +289,37 @@ For each entry in `techStack`, look up the matching rule directory:
 | ArkTS, HarmonyOS, OpenHarmony | `arkts/` |
 | HTML, CSS, Web (通用前端) | `web/` |
 
-Copy ALL files from each matched directory to the **project root's** `.claude/rules/ecc/`:
+Copy files and strip YAML `paths` frontmatter:
 
 ```bash
-cp -r subprojects/everything-claude-code/rules/<matched-dir> <PROJECT_ROOT>/.claude/rules/ecc/
+# Step 1: Copy rules
+cp -r subprojects/everything-claude-code/rules/<matched-dir> <PROJECT_ROOT>/.claude/rules/<matched-dir>/
+
+# Step 2: Strip YAML frontmatter (paths scoping prevents startup loading)
+# Without this, rules with "---\npaths:\n  - ...\n---" only trigger when
+# Claude reads matching files — they never appear in <system-reminder>.
+for f in <PROJECT_ROOT>/.claude/rules/<matched-dir>/*.md; do
+  sed -i '1{/^---$/!q}; /^---$/,/^---$/d' "$f"
+done
 ```
 
 Where `<PROJECT_ROOT>` is the directory containing `prd.json` (the project being built, NOT the harness workspace).
 
 ### Verify
 
-After copying, verify only language rules are present (no common/):
-
 ```bash
-ls .claude/rules/ecc/typescript/   # if TypeScript in techStack
-ls .claude/rules/ecc/react/        # if React in techStack
-# common/ should NOT exist here — it's at user level (~/.claude/rules/ecc/common/)
+ls .claude/rules/typescript/   # if TypeScript in techStack
+ls .claude/rules/react/        # if React in techStack
+# Rules should start with "# Title" not "---\npaths:"
+head -1 .claude/rules/typescript/*.md
 ```
 
 ### ⚠️ Critical Rules
 
-- **TARGET MUST be the project root's `.claude/rules/ecc/`** — where `prd.json` lives, NOT the harness workspace
+- **TARGET is `<PROJECT_ROOT>/.claude/rules/<language>/`** — where `prd.json` lives, NOT the harness workspace
 - **Only copy what techStack references** — do NOT copy all language directories
-- **NEVER copy `common/`** — it is already inherited from `~/.claude/rules/ecc/common/` (user-level)
-- **Preserve directory structure** — each language goes to `.claude/rules/ecc/<language>/`
+- **NEVER copy `common/`** — it is already inherited from user-level
+- **Strip `paths` frontmatter** — otherwise rules won't load at session start
 
 ---
 
@@ -322,7 +329,7 @@ Before writing prd.json, verify:
 
 - [ ] **Previous run archived** (if prd.json exists with different branchName, archive it first)
 - [ ] `techStack` field populated from PRD content
-- [ ] **ECC language rules copied** — only language-specific rules (NOT common/) from techStack to `<PROJECT_ROOT>/.claude/rules/ecc/`
+- [ ] **ECC language rules copied** — only language-specific rules (NOT common/) to `<PROJECT_ROOT>/.claude/rules/<language>/`, with YAML `paths` frontmatter stripped
 - [ ] Each story is completable in one iteration (small enough)
 - [ ] Stories are ordered by dependency (schema to backend to UI)
 - [ ] Every story has "Typecheck passes" as criterion
