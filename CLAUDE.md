@@ -3,7 +3,10 @@
 > **SECURITY: 此仓库在 harness 项目上下文中作为只读子模块使用。**
 > 当作为 harness 子项目运行时，禁止在此目录下创建、修改或删除任何文件。
 > 修改流程：在此独立克隆中开发 → git push 上游 GitHub → harness 子模块 `git submodule update --remote` 同步。
-> 当前版本: 2.2.0
+> 当前版本: 2.3.0
+
+> **Available skills** (in `skills/`): `prd` — generate PRD from ideas; `ralph` — convert PRD to prd.json; `research` — pre-project technical research (requirements analysis, technology selection, high-level design, detailed design).
+> For skills to work, this repo must be used as a Harness subproject — skills reference sibling subprojects' SKILL.md files via relative paths.
 
 > **This is the SIMPLE mode prompt** (used by `./ralph.sh --mode simple`).
 > For harness mode (Generator-Evaluator architecture), see `generator-prompt.md` and `evaluator-prompt.md`.
