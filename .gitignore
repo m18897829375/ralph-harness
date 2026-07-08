@@ -9,6 +9,9 @@ progress.txt
 # OS files
 .DS_Store
 
+# Research/task files (not part of the project)
+tasks/
+
 # Claude Code runtime files (keep examples)
 .claude/*
 !/.claude/settings.json.example
