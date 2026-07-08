@@ -212,8 +212,6 @@ fi
 # Signal handling & cleanup
 # ============================================================
 RALPH_NORMAL_EXIT=false
-# 清理上次 crash 遗留的 PID 文件
-rm -f "${RALPH_DIR}/agent-pid.txt"
 
 trap 'cleanup SIGINT' SIGINT
 trap 'cleanup SIGTERM' SIGTERM
@@ -243,73 +241,21 @@ cleanup() {
   fi
 }
 
-# Check if a process is alive using multiple detection methods.
-# On MSYS2/Windows, both kill -0 and ps -p can falsely report dead processes
-# as alive (both depend on the same /proc emulation layer).  tasklist queries
-# the Windows kernel process table directly and is the ground truth.
-# Returns 0 if the process is alive, 1 if it is dead.
-_is_process_alive() {
-  local pid="$1"
-
-  # Windows: tasklist queries the kernel directly, immune to MSYS2 /proc lag
-  if command -v tasklist >/dev/null 2>&1; then
-    if tasklist /FI "PID eq $pid" 2>/dev/null | grep -qw "$pid"; then
-      return 0
-    fi
-    return 1
-  fi
-
-  # Linux/macOS fallback
-  if ps -p "$pid" >/dev/null 2>&1; then
-    return 0
-  fi
-  if kill -0 "$pid" 2>/dev/null; then
-    return 0
-  fi
-  return 1
-}
-
-# Terminate a process and all its descendants (process tree).
-# Windows: taskkill /T does native tree termination.
-# Linux/macOS: recursively enumerate and kill children first, then parent.
-_kill_process_tree() {
-  local pid="$1"
-  [ -z "$pid" ] && return 0
-
-  if command -v tasklist >/dev/null 2>&1; then
-    taskkill /T /PID "$pid" /F 2>/dev/null
-  else
-    local children
-    children=$(ps -o pid= --ppid "$pid" 2>/dev/null)
-    for child in $children; do
-      _kill_process_tree "$child"
-    done
-    kill -9 "$pid" 2>/dev/null || true
-  fi
-}
-
 kill_claude_subprocesses() {
   echo "  Terminating subprocesses..."
 
-  # 精准杀死 ralph 记录的 agent PID（不改动其他 Claude Code 窗口）
-  if [ -f "${RALPH_DIR}/agent-pid.txt" ]; then
-    local pid
-    pid=$(cat "${RALPH_DIR}/agent-pid.txt")
-    if [ -n "$pid" ] && _is_process_alive "$pid"; then
-      _kill_process_tree "$pid"
-      echo "  Terminated agent PID tree: $pid"
-    fi
-    rm -f "${RALPH_DIR}/agent-pid.txt"
-  fi
-
-  # 备用：jobs 清理
+  # Kill all background jobs spawned by this shell
   local child_pids
   child_pids=$(jobs -p 2>/dev/null) || true
   if [ -n "$child_pids" ]; then
     for cpid in $child_pids; do
-      _kill_process_tree "$cpid"
+      if command -v tasklist >/dev/null 2>&1; then
+        taskkill /T /PID "$cpid" /F 2>/dev/null
+      else
+        kill "$cpid" 2>/dev/null || true
+      fi
     done
-    echo "  Terminated child jobs tree: $child_pids"
+    echo "  Terminated child jobs: $child_pids"
   fi
 }
 
@@ -578,10 +524,9 @@ verify_evaluator_evaluate_output() {
 # Agent wait with output detection + heartbeat
 # ============================================================
 
-# Check if agent has produced contract output (contract phases only).
-# Build and evaluate phases use natural exit — see wait_for_agent().
+# Check if agent has produced valid contract output (contract phases only).
+# Does NOT need PID — uses PHASE_FILE to determine role.
 _check_agent_output() {
-  local pid="$1"
   local phase
   phase=$(cat "$PHASE_FILE" 2>/dev/null)
 
@@ -591,8 +536,7 @@ _check_agent_output() {
         local status
         status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null || echo "")
         if [ -n "$status" ]; then
-          echo "  [DETECT] contract.json ready (status: $status). Proceeding..."
-          _kill_process_tree "$pid"
+          echo "  [DETECT] contract.json ready (status: $status)."
           return 0
         fi
       fi
@@ -603,8 +547,7 @@ _check_agent_output() {
         status=$(jq -r '.status // empty' "$CONTRACT_FILE" 2>/dev/null || echo "")
         case "$status" in
           locked|generator_revise)
-            echo "  [DETECT] contract.json review done (status: $status). Proceeding..."
-            _kill_process_tree "$pid"
+            echo "  [DETECT] contract.json review done (status: $status)."
             return 0
             ;;
         esac
@@ -614,41 +557,37 @@ _check_agent_output() {
   return 1
 }
 
-# Wait for agent completion.
-# Build/evaluate: file-based signals (immune to launcher/worker PID mismatch).
-# Contract: process polling + _check_agent_output.
+# Wait for agent completion — all phases use file-based signals.
+# No PID dependency. Completion is detected via sentinel files, output files,
+# or <promise>COMPLETE</promise> in stdout.
 wait_for_agent() {
-  local pid="$1"
-  local phase_label="$2"
+  local phase_label="$1"
   local phase
   phase=$(cat "$PHASE_FILE" 2>/dev/null)
 
   case "$phase" in
-    generator-build)    _wait_for_file "${RALPH_DIR}/build-done" "$phase_label" "Generator build" "$pid" ;;
-    evaluator-evaluate) _wait_for_evaluation "$phase_label" "$pid" ;;
-    *)                  _wait_for_process_or_output "$pid" "$phase_label" ;;
+    generator-build)    _wait_for_file "${RALPH_DIR}/build-done" "$phase_label" "Generator build" ;;
+    evaluator-evaluate) _wait_for_evaluation "$phase_label" ;;
+    *)                  _wait_for_process_or_output "$phase_label" ;;
   esac
 }
 
-# Wait for a sentinel file (build/evaluate phases — no PID dependency).
+# Wait for a sentinel file (generator-build phase).
+# File-based detection: sentinel file > COMPLETE in stdout > timeout.
 _wait_for_file() {
-  local file="$1" phase_label="$2" desc="$3" pid="$4"
-  local elapsed=0 tick=60 timeout=7200 pid_dead=0
+  local file="$1" phase_label="$2" desc="$3"
+  local elapsed=0 tick=60 timeout=7200
   rm -f "$file"
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
-    # Normal completion: sentinel file appeared
+    # 1) Sentinel file — agent completed normally
     [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
-    # Agent PID may be a pipeline wrapper that exits quickly while the real
-    # process (claude-tap) continues. Use grace period before acting on PID death.
-    if ! _is_process_alive "$pid"; then
-      pid_dead=$((pid_dead + 1))
-      if [ $pid_dead -ge 5 ]; then
-        echo "  [$desc] Agent PID $pid gone for ${pid_dead} cycles — auto-creating sentinel."
-        echo "done" > "$file"
-        return 0
-      fi
+    # 2) COMPLETE in stdout — agent finished, auto-create sentinel
+    if grep -q '<promise>COMPLETE</promise>' "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null; then
+      echo "  [$desc] COMPLETE detected — auto-creating sentinel."
+      echo "done" > "$file"
+      return 0
     fi
   done
   echo "  [TIMEOUT] $desc did not complete within $((timeout / 60)) min."
@@ -656,45 +595,52 @@ _wait_for_file() {
 }
 
 # Wait for evaluation.json to appear with valid score.
+# File-based detection: evaluation.json > COMPLETE in stdout > timeout.
 _wait_for_evaluation() {
-  local phase_label="$1" pid="$2" elapsed=0 tick=60 timeout=7200 pid_dead=0
+  local phase_label="$1" elapsed=0 tick=60 timeout=7200
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
-    # Normal completion: evaluation.json with valid score
+    # 1) evaluation.json with valid score — normal completion
     if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
       local s; s=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null || echo "-1")
       [ "$s" != "-1" ] && [ "$s" != "null" ] && echo "  Evaluation complete (score: $s, $((elapsed / 60)) min)." && return 0
     fi
-    # Agent PID may be a pipeline wrapper that exits quickly.
-    # Use grace period (5 cycles) before concluding the agent is truly gone.
-    if ! _is_process_alive "$pid"; then
-      pid_dead=$((pid_dead + 1))
-      if [ $pid_dead -ge 5 ]; then
-        echo "  [Evaluator] Agent PID $pid gone for ${pid_dead} cycles."
-        if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
-          echo "  [Evaluator] evaluation.json present — accepting."
-          return 0
-        fi
-        echo "  [Evaluator] No evaluation.json after grace period — treating as incomplete."
-        return 1
+    # 2) COMPLETE in stdout — check if evaluation.json exists
+    if grep -q '<promise>COMPLETE</promise>' "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null; then
+      if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
+        echo "  [Evaluator] COMPLETE detected, evaluation.json present — accepting."
+        return 0
       fi
+      echo "  [Evaluator] COMPLETE detected but no evaluation.json — treating as incomplete."
+      return 1
     fi
   done
   echo "  [TIMEOUT] No evaluation.json after $((timeout / 60)) min."
   return 1
 }
 
-# Process-polling wait for contract phases.
+# Wait for contract-phase agent completion.
+# File-based detection: contract.json > COMPLETE in stdout > timeout.
 _wait_for_process_or_output() {
-  local pid="$1" phase_label="$2"
-  local output_ready=false elapsed=0 tick=60 heartbeat=600
-  while _is_process_alive "$pid"; do
+  local phase_label="$1"
+  local elapsed=0 tick=60 timeout=7200
+  while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
-    [ $((elapsed % heartbeat)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — PID $pid running $((elapsed / 60)) min..."
-    [ "$output_ready" = false ] && [ $elapsed -ge 120 ] && _check_agent_output "$pid" && output_ready=true
+    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
+    # 1) contract.json with valid output
+    if _check_agent_output 2>/dev/null; then
+      echo "  [$phase_label] Contract output detected ($((elapsed / 60)) min)."
+      return 0
+    fi
+    # 2) COMPLETE in stdout
+    if grep -q '<promise>COMPLETE</promise>' "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null; then
+      echo "  [$phase_label] COMPLETE detected."
+      return 0
+    fi
   done
-  wait "$pid" 2>/dev/null
+  echo "  [TIMEOUT] $phase_label did not complete within $((timeout / 60)) min."
+  return 1
 }
 
 # ============================================================
@@ -980,11 +926,7 @@ run_agent() {
       echo "  [TAP] Capturing gen/eva API traffic via claude-tap"
     fi
     assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" $CLAUDE_CMD --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
-    local agent_pid=$!
-    echo "$agent_pid" > "${RALPH_DIR}/agent-pid.txt"
-    wait_for_agent "$agent_pid" "$phase_label"
-    _kill_process_tree "$agent_pid" 2>/dev/null || true
-    rm -f "${RALPH_DIR}/agent-pid.txt"
+    wait_for_agent "$phase_label"
   fi
 
   cost_track_end "$phase_label"
