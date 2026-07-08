@@ -69,7 +69,7 @@
 
 ### 强制规则
 
-1. **按验收标准选择工具。** 阅读验收标准，判断需要什么工具来验证。浏览器 UI 测试 → 使用已配置的浏览器 MCP 工具（如 Playwright）。API 测试 → curl/httpie。数据库验证 → 对应 CLI。**禁止仅凭 typecheck 通过就认为功能正确——必须实际运行验证。** typecheck 是代码质量检查（类型/语法），不能替代功能实测（应用启动、UI交互、API响应）。
+1. **按验收标准选择工具。** 阅读验收标准，判断需要什么工具来验证。浏览器 UI 测试 → 使用 `opencli playwright` CLI 工具。API 测试 → curl/httpie。数据库验证 → 对应 CLI。**禁止仅凭 typecheck 通过就认为功能正确——必须实际运行验证。** typecheck 是代码质量检查（类型/语法），不能替代功能实测（应用启动、UI交互、API响应）。
 
 2. **CLI优先于MCP（Harness 硬性约束）。**
    - 当同一功能既有CLI工具又有MCP工具时，**只使用CLI工具**。
@@ -346,7 +346,7 @@ suggestion: <建议手动安装的命令>
      调用：Task(subagent_type="code-reviewer", prompt="审查本故事的代码变更...")
    - **security-reviewer**：如涉及认证/授权/加密/用户输入/API密钥/数据库查询，必须调用安全审查。
    - **tdd-guide**：如本故事包含测试文件，必须调用验证测试质量。
-   - **e2e-runner**：如涉及 UI 交互且已配置 Playwright MCP，必须执行端到端测试。
+   - **e2e-runner**：如涉及 UI 交互，必须通过 `opencli playwright` CLI 执行端到端测试。
 
    调用结果记录在 progress.txt 中。未调用 subagent 直接提交 → Evaluator 扣分。
 

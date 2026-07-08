@@ -74,7 +74,7 @@
 
 ### 强制规则
 
-1. **按验收标准选择工具。** 阅读验收标准，判断需要什么工具来验证。浏览器 UI 测试 → 使用已配置的浏览器 MCP 工具（项目 `.mcp.json` 中配置，如 Playwright MCP）。API 测试 → curl/httpie。数据库验证 → 对应 CLI。其他 MCP 通过 `match_cli.py`（BM25）搜索或在 `.mcp.json` 和 MCP 索引表中查找。**禁止用"读代码判断"代替实测。**
+1. **按验收标准选择工具。** 阅读验收标准，判断需要什么工具来验证。浏览器 UI 测试 → 使用 `opencli playwright` CLI 工具（navigate/screenshot/snapshot/click）。API 测试 → curl/httpie。数据库验证 → 对应 CLI。其他 MCP 通过 `match_cli.py`（BM25）搜索或在 `.mcp.json` 和 MCP 索引表中查找。**禁止用"读代码判断"代替实测。**
 
 2. **CLI优先于MCP（Harness 硬性约束）。**
    - 当同一功能既有CLI工具又有MCP工具时，**只使用CLI工具**。
@@ -324,7 +324,7 @@ suggestion: <建议的手动安装命令>
 
 1. **code-reviewer**（每次评估必须调用）：审查 Generator 代码变更的质量，问题清单作为 codeQuality 评分依据。
 2. **security-reviewer**（涉安全代码必须调用）：认证/授权/加密/用户输入/API 密钥/数据库查询/支付 → 必须调用安全审查，发现问题作为扣分/判定失败依据。
-3. **e2e-runner**（UI + Playwright 必须调用）：涉及 UI 交互且已配置 Playwright MCP → 必须执行自动化测试。
+3. **e2e-runner**（UI + Playwright 必须调用）：涉及 UI 交互 → 必须通过 `opencli playwright` CLI 执行自动化测试。
 4. **silent-failure-hunter**（每次评估必须调用）：检查代码中的静默失败、错误吞没、不恰当降级逻辑。
 
 调用结果记录在 evaluation.json 的 feedback 中，含 subagent 名称和关键发现摘要。
@@ -335,7 +335,7 @@ suggestion: <建议的手动安装命令>
 
 **1. 概览代码结构** — 快速浏览，了解文件分布。不逐行细读。
 
-**2. 启动应用 + 浏览器全量测试** — `npm run dev`。使用项目配置的浏览器 MCP 工具（如 Playwright MCP）逐条验证所有验收标准。记录 PASS/FAIL + 证据。
+**2. 启动应用 + 浏览器全量测试** — `npm run dev`。使用 `opencli playwright` CLI 逐条验证所有验收标准。记录 PASS/FAIL + 证据。
 
 **3. API和数据库验证**（如合同涉及）— 调用API验证响应、检查数据库状态、验证错误处理。
 
@@ -369,11 +369,11 @@ suggestion: <建议的手动安装命令>
 
 ### 浏览器交互测试（强制 — 涉及 UI 的验收标准必须执行）
 
-对于任何涉及用户交互的验收标准（点击按钮、弹窗开关、表单输入、条件渲染变化），你必须使用项目已配置的浏览器 MCP 工具在浏览器中实际执行操作：
+对于任何涉及用户交互的验收标准（点击按钮、弹窗开关、表单输入、条件渲染变化），你必须使用 `opencli playwright` CLI 在浏览器中实际执行操作：
 
-1. `browser_navigate` 导航到目标页面
-2. 执行具体的用户操作（点击、输入、选择等）
-3. `browser_take_screenshot` 验证 UI 状态变化
+1. `opencli playwright navigate "<url>"` 导航到目标页面
+2. `opencli playwright click "<selector>"` / `opencli playwright type "<selector>" "<text>"` 执行用户操作
+3. `opencli playwright screenshot "<url>"` 验证 UI 状态变化
 4. 在 `evidence` 中描述操作步骤和截图结果
 
 **绝对禁止的行为（这些是无效证据）：**

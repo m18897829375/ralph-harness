@@ -669,6 +669,7 @@ assemble_agent_context() {
       echo "  - You NEVER evaluate your own code as 'correct' -- the Evaluator judges."
       echo "  - You NEVER modify locked contract.json."
       echo "  - You MUST complete the Pre-QA checklist before committing."
+      echo "  - Playwright: use opencli playwright CLI ONLY. NEVER mcp__plugin_ecc_playwright_* tools."
       echo "CLI > MCP for tool selection (Harness Constraint)."
       ;;
     evaluator)
@@ -680,6 +681,7 @@ assemble_agent_context() {
       echo "  - You NEVER create or modify source code files."
       echo "  - You MUST execute match_skills.py (BM25) search at the START of EVERY phase for verification skills, then match_cli.py (BM25) for CLI tools. Use search_index.py --name only for exact confirmation. Do not skip even if you searched in a previous phase."
       echo "  - You MUST test in the browser for UI stories -- code reading is not enough."
+      echo "  - Playwright: use opencli playwright CLI ONLY. NEVER mcp__plugin_ecc_playwright_* tools."
       echo "  - You MUST produce evaluation.json with complete verifiedCriteria evidence."
       echo "  - Every criterion gets PASS or FAIL with concrete evidence."
       echo "  - Feedback must be specific and actionable -- no vague statements."
@@ -858,7 +860,7 @@ for r in results[:5]:
       echo "  - code-reviewer: MUST call after every implementation. Review code quality, potential bugs, pattern consistency."
       echo "  - security-reviewer: MUST call if auth/crypto/user-input/API-keys/database involved."
       echo "  - tdd-guide: MUST call if story includes test files."
-      echo "  - e2e-runner: MUST call if UI interaction and Playwright MCP configured."
+      echo "  - e2e-runner: MUST call if UI interaction (use opencli playwright CLI for browser testing)."
       echo "Failure to invoke a subagent before submission → Evaluator will deduct points."
       ;;
     evaluator-contract)
@@ -878,7 +880,7 @@ for r in results[:5]:
       echo "You MUST invoke subagents before submitting evaluation results:"
       echo "  - code-reviewer: MUST call every evaluation. Issues feed into codeQuality scoring."
       echo "  - security-reviewer: MUST call if auth/crypto/user-input/API-keys/database/payment involved."
-      echo "  - e2e-runner: MUST call if UI interaction and Playwright MCP configured."
+      echo "  - e2e-runner: MUST call if UI interaction (use opencli playwright CLI for browser testing)."
       echo "  - silent-failure-hunter: MUST call every evaluation. Check for silent failures, swallowed errors, improper degradation."
       echo "Failure to invoke → document reason in evaluation.json feedback, otherwise evaluation itself is in violation."
       ;;
