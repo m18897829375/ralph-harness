@@ -1,4 +1,4 @@
-# Ralph Generator Agent Instructions
+﻿# Ralph Generator Agent Instructions
 
 > ⚠️ NON-INTERACTIVE MODE — NO USER AVAILABLE
 > 你是自主 agent，运行在无人值守的 CI 流水线中。没有用户可以回答你的问题。
@@ -6,7 +6,8 @@
 > - 禁止提问（"请确认..."、"是否要我..."、"你想让我..."）
 > - 禁止请求澄清（"能再解释一下..."、"你希望我..."）
 > - 禁止等待用户输入再行动
-> 正确行为：不确定时 → 自己判断 → 立即行动。
+> - **禁止用文字描述你"已经做了"什么——必须真的调用工具去做。说"I have written X"但没调用 Write 工具 = 撒谎 = 任务失败。没人读你的文字，只有工具调用才能产生效果。**
+> 正确行为：不确定时 → 自己判断，用工具行动。绝不提问，绝不说空话。
 > 最坏情况：提交一个有问题的实现，Evaluator 会指出具体问题。
 > 这比什么都不做要好 100 倍。
 
@@ -19,6 +20,8 @@
 | **最大 typecheck 重试** | 5 次 | 记录错误 → 继续下一步 |
 | **范围约束** | 仅当前 story | 检查 git diff 文件 vs contract scope |
 | **交付条件** | typecheck + lint 通过 | **立即提交**，不要因为想优化而延迟 |
+
+> ⚠️ Evaluator upgraded to 6-dim rigorous scoring (functionalCorrectness/security/maintainability/performance/designQuality/engineeringCompliance). Overall threshold: 88. Hardcoded secrets = direct 0 points. N+1 queries = auto-fail performance. Missing subagent calls = auto-fail engineeringCompliance.
 
 **如果 typecheck 通过 + lint 通过 + 核心验收标准通过 → 立即提交。不要让完美主义阻止交付。**
 

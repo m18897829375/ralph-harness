@@ -904,7 +904,7 @@ for r in results[:5]:
       echo ""
       echo "=== REQUIRED SUBAGENTS (MUST invoke before submitting evaluation) ==="
       echo "You MUST invoke subagents before submitting evaluation results:"
-      echo "  - code-reviewer: MUST call every evaluation. Issues feed into codeQuality scoring."
+      echo "  - code-reviewer: MUST call every evaluation. Issues feed into security/maintainability scoring."
       echo "  - security-reviewer: MUST call if auth/crypto/user-input/API-keys/database/payment involved."
       echo "  - e2e-runner: MUST call if UI interaction (use opencli playwright CLI for browser testing)."
       echo "  - silent-failure-hunter: MUST call every evaluation. Check for silent failures, swallowed errors, improper degradation."
@@ -1224,27 +1224,35 @@ update_prd_evaluation() {
        --argjson pass "$overall_pass" \
        --argjson score "$overall_score" \
        --argjson retry "$retry_attempt" \
-       --argjson func_score "$(jq -r '.scores.functionality.score // 0' "$EVALUATION_FILE")" \
-       --argjson func_pass "$(jq -r '.scores.functionality.pass // false' "$EVALUATION_FILE")" \
-       --argjson code_score "$(jq -r '.scores.codeQuality.score // 0' "$EVALUATION_FILE")" \
-       --argjson code_pass "$(jq -r '.scores.codeQuality.pass // false' "$EVALUATION_FILE")" \
+       --argjson func_score "$(jq -r '.scores.functionalCorrectness.score // 0' "$EVALUATION_FILE")" \
+       --argjson func_pass "$(jq -r '.scores.functionalCorrectness.pass // false' "$EVALUATION_FILE")" \
+       --argjson sec_score "$(jq -r '.scores.security.score // 0' "$EVALUATION_FILE")" \
+       --argjson sec_pass "$(jq -r '.scores.security.pass // false' "$EVALUATION_FILE")" \
+       --argjson maint_score "$(jq -r '.scores.maintainability.score // 0' "$EVALUATION_FILE")" \
+       --argjson maint_pass "$(jq -r '.scores.maintainability.pass // false' "$EVALUATION_FILE")" \
+       --argjson perf_score "$(jq -r '.scores.performance.score // 0' "$EVALUATION_FILE")" \
+       --argjson perf_pass "$(jq -r '.scores.performance.pass // false' "$EVALUATION_FILE")" \
        --argjson design_score "$(jq -r '.scores.designQuality.score // 0' "$EVALUATION_FILE")" \
        --argjson design_pass "$(jq -r '.scores.designQuality.pass // false' "$EVALUATION_FILE")" \
-       --argjson depth_score "$(jq -r '.scores.productDepth.score // 0' "$EVALUATION_FILE")" \
-       --argjson depth_pass "$(jq -r '.scores.productDepth.pass // false' "$EVALUATION_FILE")" \
+       --argjson eng_score "$(jq -r '.scores.engineeringCompliance.score // 0' "$EVALUATION_FILE")" \
+       --argjson eng_pass "$(jq -r '.scores.engineeringCompliance.pass // false' "$EVALUATION_FILE")" \
        --arg feedback "$(jq -r '.feedback // ""' "$EVALUATION_FILE")" \
       '(.userStories[] | select(.id == $id) | .retryCount) |= $retry |
        (.userStories[] | select(.id == $id) | .evaluation.overallScore) |= $score |
        (.userStories[] | select(.id == $id) | .evaluation.overallPass) |= $pass |
        (.userStories[] | select(.id == $id) | .evaluation.feedback) |= $feedback |
-       (.userStories[] | select(.id == $id) | .evaluation.functionality.score) |= $func_score |
-       (.userStories[] | select(.id == $id) | .evaluation.functionality.pass) |= $func_pass |
-       (.userStories[] | select(.id == $id) | .evaluation.codeQuality.score) |= $code_score |
-       (.userStories[] | select(.id == $id) | .evaluation.codeQuality.pass) |= $code_pass |
+       (.userStories[] | select(.id == $id) | .evaluation.functionalCorrectness.score) |= $func_score |
+       (.userStories[] | select(.id == $id) | .evaluation.functionalCorrectness.pass) |= $func_pass |
+       (.userStories[] | select(.id == $id) | .evaluation.security.score) |= $sec_score |
+       (.userStories[] | select(.id == $id) | .evaluation.security.pass) |= $sec_pass |
+       (.userStories[] | select(.id == $id) | .evaluation.maintainability.score) |= $maint_score |
+       (.userStories[] | select(.id == $id) | .evaluation.maintainability.pass) |= $maint_pass |
+       (.userStories[] | select(.id == $id) | .evaluation.performance.score) |= $perf_score |
+       (.userStories[] | select(.id == $id) | .evaluation.performance.pass) |= $perf_pass |
        (.userStories[] | select(.id == $id) | .evaluation.designQuality.score) |= $design_score |
        (.userStories[] | select(.id == $id) | .evaluation.designQuality.pass) |= $design_pass |
-       (.userStories[] | select(.id == $id) | .evaluation.productDepth.score) |= $depth_score |
-       (.userStories[] | select(.id == $id) | .evaluation.productDepth.pass) |= $depth_pass' \
+       (.userStories[] | select(.id == $id) | .evaluation.engineeringCompliance.score) |= $eng_score |
+       (.userStories[] | select(.id == $id) | .evaluation.engineeringCompliance.pass) |= $eng_pass' \
       "$PRD_FILE" > "$tmp_file"
     mv "$tmp_file" "$PRD_FILE"
   fi
@@ -1331,7 +1339,7 @@ generate_audit_report() {
   echo ""
   echo "  Story Evaluation Summary:"
   echo "  -------------------------"
-  jq -r '.userStories[] | "  \(.id): \(.title)\n    Passed: \(.passes) | BestEffort: \(.bestEffort // false) | Retries: \(.retryCount // 0)\n    Score: \(.evaluation.overallScore // "N/A") | F:\(.evaluation.functionality.score // "?") | C:\(.evaluation.codeQuality.score // "?") | D:\(.evaluation.designQuality.score // "?") | P:\(.evaluation.productDepth.score // "?")"' "$PRD_FILE"
+  jq -r '.userStories[] | "  \(.id): \(.title)\n    Passed: \(.passes) | BestEffort: \(.bestEffort // false) | Retries: \(.retryCount // 0)\n    Score: \(.evaluation.overallScore // "N/A") | F:\(.evaluation.functionalCorrectness.score // "?") | S:\(.evaluation.security.score // "?") | M:\(.evaluation.maintainability.score // "?") | P:\(.evaluation.performance.score // "?") | D:\(.evaluation.designQuality.score // "?") | E:\(.evaluation.engineeringCompliance.score // "?")"' "$PRD_FILE"
 
   # Flag potential evaluator strictness/leniency issues
   echo ""
@@ -1340,18 +1348,18 @@ generate_audit_report() {
 
   # Find stories that passed with very low scores (possible leniency)
   local low_score_passes
-  low_score_passes=$(jq -r '[.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 70)] | length' "$PRD_FILE")
+  low_score_passes=$(jq -r '[.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 80)] | length' "$PRD_FILE")
   if [ "$low_score_passes" -gt 0 ]; then
     echo "  WARNING: $low_score_passes story(s) passed with score < 70 (possible evaluator leniency):"
-    jq -r '.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 70) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
+    jq -r '.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 80) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
   fi
 
   # Find stories that failed despite high scores (possible evaluator strictness)
   local high_score_fails
-  high_score_fails=$(jq -r '[.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 80)] | length' "$PRD_FILE")
+  high_score_fails=$(jq -r '[.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 90)] | length' "$PRD_FILE")
   if [ "$high_score_fails" -gt 0 ]; then
     echo "  NOTE: $high_score_fails story(s) failed despite score >= 80 (possible evaluator strictness):"
-    jq -r '.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 80) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
+    jq -r '.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 90) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
   fi
 
   # Summary statistics
