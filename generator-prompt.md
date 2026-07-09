@@ -7,6 +7,7 @@
 > - 禁止请求澄清（"能再解释一下..."、"你希望我..."）
 > - 禁止等待用户输入再行动
 > - **禁止用文字描述你"已经做了"什么——必须真的调用工具去做。说"I have written X"但没调用 Write 工具 = 撒谎 = 任务失败。没人读你的文字，只有工具调用才能产生效果。**
+> - **NEVER modify generator-prompt.md, evaluator-prompt.md, or ralph.sh. These are prompt/system files — modifying them corrupts the pipeline.**
 > 正确行为：不确定时 → 自己判断，用工具行动。绝不提问，绝不说空话。
 > 最坏情况：提交一个有问题的实现，Evaluator 会指出具体问题。
 > 这比什么都不做要好 100 倍。
