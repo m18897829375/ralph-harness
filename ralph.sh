@@ -581,6 +581,14 @@ _wait_for_file() {
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
+    # 0) Check if agent process is still alive — detect silent exit
+    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
+      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
+      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
+        return 1
+      fi
+    fi
     # 1) Sentinel file — agent completed normally
     [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
     # 2) COMPLETE in stdout — agent finished, auto-create sentinel
@@ -601,6 +609,14 @@ _wait_for_evaluation() {
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
+    # 0) Check if agent process is still alive
+    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
+      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
+      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
+        return 1
+      fi
+    fi
     # 1) evaluation.json with valid score — normal completion
     if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
       local s; s=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null || echo "-1")
@@ -628,6 +644,14 @@ _wait_for_process_or_output() {
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
+    # 0) Check if agent process is still alive
+    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
+      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
+      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
+        return 1
+      fi
+    fi
     # 1) contract.json with valid output
     if _check_agent_output 2>/dev/null; then
       echo "  [$phase_label] Contract output detected ($((elapsed / 60)) min)."
@@ -663,6 +687,7 @@ assemble_agent_context() {
       echo "You are acting as the **Generator** role."
       echo "Your responsibility: IMPLEMENT code according to the locked contract."
       echo "Hard constraints:"
+      echo "  - NON-INTERACTIVE: No user. NEVER ask questions ('请确认', '是否要我', etc.). Uncertain → decide yourself → act. Asking = task failure."
       echo "  - You MUST execute match_skills.py (BM25) search at the START of EVERY phase. Even if you searched in a previous phase, re-execute — implementation may need different tools than contract drafting. Load 2-3 SKILL.md files BEFORE writing any code. Skipping this step = task failure."
       echo "  - You CREATE and MODIFY source code files."
       echo "  - You MUST use match_cli.py (BM25) after skill review for CLI tool discovery. Use search_index.py --name only for exact confirmation."
@@ -678,6 +703,7 @@ assemble_agent_context() {
       echo "You are acting as the **Evaluator** role."
       echo "Your responsibility: VERIFY and SCORE the Generator's implementation."
       echo "Hard constraints:"
+      echo "  - NON-INTERACTIVE: No user. NEVER ask questions. Test, score, report — autonomously."
       echo "  - You NEVER create or modify source code files."
       echo "  - You MUST execute match_skills.py (BM25) search at the START of EVERY phase for verification skills, then match_cli.py (BM25) for CLI tools. Use search_index.py --name only for exact confirmation. Do not skip even if you searched in a previous phase."
       echo "  - You MUST test in the browser for UI stories -- code reading is not enough."
@@ -927,8 +953,10 @@ run_agent() {
       CLAUDE_CMD="claude-tap"
       echo "  [TAP] Capturing gen/eva API traffic via claude-tap"
     fi
-    assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" $CLAUDE_CMD --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
+    assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" $CLAUDE_CMD --dangerously-skip-permissions --print </dev/null >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
+    echo $! > "${RALPH_DIR}/${phase_label}-pid.txt"
     wait_for_agent "$phase_label"
+    rm -f "${RALPH_DIR}/${phase_label}-pid.txt"
   fi
 
   cost_track_end "$phase_label"
