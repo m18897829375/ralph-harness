@@ -581,14 +581,6 @@ _wait_for_file() {
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
-    # 0) Check if agent process is still alive — detect silent exit
-    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
-      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
-      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
-        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
-        return 1
-      fi
-    fi
     # 1) Sentinel file — agent completed normally
     [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
     # 2) COMPLETE in stdout — agent finished, auto-create sentinel
@@ -596,6 +588,14 @@ _wait_for_file() {
       echo "  [$desc] COMPLETE detected — auto-creating sentinel."
       echo "done" > "$file"
       return 0
+    fi
+    # 3) Check if agent process exited without producing completion signal
+    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
+      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
+      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
+        return 1
+      fi
     fi
   done
   echo "  [TIMEOUT] $desc did not complete within $((timeout / 60)) min."
@@ -609,14 +609,6 @@ _wait_for_evaluation() {
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
-    # 0) Check if agent process is still alive
-    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
-      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
-      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
-        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
-        return 1
-      fi
-    fi
     # 1) evaluation.json with valid score — normal completion
     if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
       local s; s=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null || echo "-1")
@@ -631,6 +623,14 @@ _wait_for_evaluation() {
       echo "  [Evaluator] COMPLETE detected but no evaluation.json — treating as incomplete."
       return 1
     fi
+    # 3) Check if agent process exited without producing completion signal
+    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
+      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
+      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
+        return 1
+      fi
+    fi
   done
   echo "  [TIMEOUT] No evaluation.json after $((timeout / 60)) min."
   return 1
@@ -644,14 +644,6 @@ _wait_for_process_or_output() {
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < ${RALPH_DIR}/${phase_label}-stderr.log 2>/dev/null || echo 0) bytes"
-    # 0) Check if agent process is still alive
-    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
-      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
-      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
-        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
-        return 1
-      fi
-    fi
     # 1) contract.json with valid output
     if _check_agent_output 2>/dev/null; then
       echo "  [$phase_label] Contract output detected ($((elapsed / 60)) min)."
@@ -661,6 +653,14 @@ _wait_for_process_or_output() {
     if grep -q '<promise>COMPLETE</promise>' "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null; then
       echo "  [$phase_label] COMPLETE detected."
       return 0
+    fi
+    # 3) Check if agent process exited without producing completion signal
+    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
+      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
+      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
+        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < ${RALPH_DIR}/${phase_label}-stdout.log 2>/dev/null || echo 0) bytes"
+        return 1
+      fi
     fi
   done
   echo "  [TIMEOUT] $phase_label did not complete within $((timeout / 60)) min."
