@@ -953,7 +953,7 @@ run_agent() {
       CLAUDE_CMD="claude-tap"
       echo "  [TAP] Capturing gen/eva API traffic via claude-tap"
     fi
-    assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" $CLAUDE_CMD --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true &
+    ( cd "$PROJECT_DIR" && assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" $CLAUDE_CMD --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true ) &
     echo $! > "${RALPH_DIR}/${phase_label}-pid.txt"
     wait_for_agent "$phase_label"
     rm -f "${RALPH_DIR}/${phase_label}-pid.txt"
