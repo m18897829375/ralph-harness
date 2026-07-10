@@ -1515,14 +1515,14 @@ run_harness_mode() {
         # Run Generator (contract mode)
         echo "  [Generator] Drafting/revising contract..."
         set_phase "generator-contract"
-      run_agent "$GENERATOR_PROMPT" "contract-round-${round}-generator-${story_id}"
+      run_agent "$GENERATOR_PROMPT" "contract-round-${round}-generator-${story_id}" || true
 
       verify_contract_phase_output || break
 
       # Run Evaluator (contract mode)
       echo "  [Evaluator] Reviewing and scoring contract..."
       set_phase "evaluator-contract"
-      run_agent "$EVALUATOR_PROMPT" "contract-round-${round}-evaluator-${story_id}"
+      run_agent "$EVALUATOR_PROMPT" "contract-round-${round}-evaluator-${story_id}" || true
 
       verify_evaluator_contract_output
 
@@ -1666,7 +1666,7 @@ run_harness_mode() {
       set_phase "generator-build"
       local gen_start_head
       gen_start_head=$(git rev-parse HEAD 2>/dev/null)
-      run_agent "$GENERATOR_PROMPT" "build-retry-${retry}-generator-${story_id}"
+      run_agent "$GENERATOR_PROMPT" "build-retry-${retry}-generator-${story_id}" || true
 
       # Detect Generator crash: no commits AND no uncommitted changes = produced nothing
       local gen_end_head
@@ -1711,7 +1711,7 @@ run_harness_mode() {
       # Run Evaluator (evaluate mode)
       echo "  [Evaluator] Testing and scoring..."
       set_phase "evaluator-evaluate"
-      run_agent "$EVALUATOR_PROMPT" "build-retry-${retry}-evaluator-${story_id}"
+      run_agent "$EVALUATOR_PROMPT" "build-retry-${retry}-evaluator-${story_id}" || true
 
       verify_evaluator_evaluate_output
 
