@@ -156,8 +156,10 @@ PHASE_FILE="$RALPH_DIR/phase"
 ARCHIVE_DIR="$PROJECT_DIR/archive"
 LAST_BRANCH_FILE="$RALPH_DIR/last-branch"
 CHANGES_FILE="$RALPH_DIR/changes-summary.txt"
-GENERATOR_PROMPT="$SCRIPT_DIR/generator-prompt.md"
-EVALUATOR_PROMPT="$SCRIPT_DIR/evaluator-prompt.md"
+GENERATOR_CONTRACT_PROMPT="$SCRIPT_DIR/generator-contract-prompt.md"
+GENERATOR_BUILD_PROMPT="$SCRIPT_DIR/generator-build-prompt.md"
+EVALUATOR_CONTRACT_PROMPT="$SCRIPT_DIR/evaluator-contract-prompt.md"
+EVALUATOR_EVALUATE_PROMPT="$SCRIPT_DIR/evaluator-evaluate-prompt.md"
 LEGACY_PROMPT="$SCRIPT_DIR/CLAUDE.md"
 
 # Ensure runtime directory exists
@@ -1400,13 +1402,23 @@ run_harness_mode() {
     exit 1
   fi
 
-  if [ ! -f "$GENERATOR_PROMPT" ]; then
-    echo "Error: generator-prompt.md not found at $GENERATOR_PROMPT"
+  if [ ! -f "$GENERATOR_CONTRACT_PROMPT" ]; then
+    echo "Error: generator-contract-prompt.md not found at $GENERATOR_CONTRACT_PROMPT"
     exit 1
   fi
 
-  if [ ! -f "$EVALUATOR_PROMPT" ]; then
-    echo "Error: evaluator-prompt.md not found at $EVALUATOR_PROMPT"
+  if [ ! -f "$GENERATOR_BUILD_PROMPT" ]; then
+    echo "Error: generator-build-prompt.md not found at $GENERATOR_BUILD_PROMPT"
+    exit 1
+  fi
+
+  if [ ! -f "$EVALUATOR_CONTRACT_PROMPT" ]; then
+    echo "Error: evaluator-contract-prompt.md not found at $EVALUATOR_CONTRACT_PROMPT"
+    exit 1
+  fi
+
+  if [ ! -f "$EVALUATOR_EVALUATE_PROMPT" ]; then
+    echo "Error: evaluator-evaluate-prompt.md not found at $EVALUATOR_EVALUATE_PROMPT"
     exit 1
   fi
 
@@ -1515,14 +1527,14 @@ run_harness_mode() {
         # Run Generator (contract mode)
         echo "  [Generator] Drafting/revising contract..."
         set_phase "generator-contract"
-      run_agent "$GENERATOR_PROMPT" "contract-round-${round}-generator-${story_id}" || true
+      run_agent "$GENERATOR_CONTRACT_PROMPT" "contract-round-${round}-generator-${story_id}" || true
 
       verify_contract_phase_output || break
 
       # Run Evaluator (contract mode)
       echo "  [Evaluator] Reviewing and scoring contract..."
       set_phase "evaluator-contract"
-      run_agent "$EVALUATOR_PROMPT" "contract-round-${round}-evaluator-${story_id}" || true
+      run_agent "$EVALUATOR_CONTRACT_PROMPT" "contract-round-${round}-evaluator-${story_id}" || true
 
       verify_evaluator_contract_output
 
@@ -1565,11 +1577,11 @@ run_harness_mode() {
         echo ""
         echo "  Last round was rejected. Giving Generator one extra revision chance..."
         set_phase "generator-contract"
-        run_agent "$GENERATOR_PROMPT" "contract-extra-round-generator-${story_id}"
+        run_agent "$GENERATOR_CONTRACT_PROMPT" "contract-extra-round-generator-${story_id}"
 
         if [ -f "$CONTRACT_FILE" ]; then
           set_phase "evaluator-contract"
-          run_agent "$EVALUATOR_PROMPT" "contract-extra-round-evaluator-${story_id}"
+          run_agent "$EVALUATOR_CONTRACT_PROMPT" "contract-extra-round-evaluator-${story_id}"
 
           if [ -f "$CONTRACT_FILE" ]; then
             local extra_score
@@ -1666,7 +1678,7 @@ run_harness_mode() {
       set_phase "generator-build"
       local gen_start_head
       gen_start_head=$(git rev-parse HEAD 2>/dev/null)
-      run_agent "$GENERATOR_PROMPT" "build-retry-${retry}-generator-${story_id}" || true
+      run_agent "$GENERATOR_BUILD_PROMPT" "build-retry-${retry}-generator-${story_id}" || true
 
       # Detect Generator crash: no commits AND no uncommitted changes = produced nothing
       local gen_end_head
@@ -1711,7 +1723,7 @@ run_harness_mode() {
       # Run Evaluator (evaluate mode)
       echo "  [Evaluator] Testing and scoring..."
       set_phase "evaluator-evaluate"
-      run_agent "$EVALUATOR_PROMPT" "build-retry-${retry}-evaluator-${story_id}" || true
+      run_agent "$EVALUATOR_EVALUATE_PROMPT" "build-retry-${retry}-evaluator-${story_id}" || true
 
       verify_evaluator_evaluate_output
 
