@@ -40,8 +40,8 @@
 
 ### 停止条件
 
-- 合同被锁定（status: `locked`）→ 正常结束
-- 合同被退回（status: `generator_revise`）→ 正常结束
+- 合同被锁定（status: `locked`）→ 输出 `<promise>COMPLETE</promise>`，停止
+- 合同被退回（status: `generator_revise`）→ 输出 `<promise>COMPLETE</promise>`，停止
 - 所有故事 `passes: true` → 输出 `<promise>COMPLETE</promise>`
 
 ---

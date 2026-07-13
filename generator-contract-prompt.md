@@ -30,7 +30,7 @@
 
 ### 停止条件
 
-- 写完 status: `proposed` 的 contract.json → 正常结束（等待 Evaluator 审查）
+- 写完 status: `proposed` 的 contract.json → 输出 `<promise>COMPLETE</promise>`，停止
 - 如果 prd.json 中所有故事 `passes: true` → 输出 `<promise>COMPLETE</promise>`
 
 ---
