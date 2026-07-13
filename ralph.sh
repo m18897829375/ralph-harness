@@ -436,32 +436,28 @@ $(cat "$CONTRACT_FILE" 2>/dev/null | jq '.' 2>/dev/null || echo "No contract.jso
 
 # Check Generator's output after contract phase — must create contract.json, never write source code
 verify_contract_phase_output() {
+  # Always check for phase violations — gen must not write source code during contract phase
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    local changed_files
+    changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
+    if [ -n "$changed_files" ]; then
+      echo ""
+      echo "==============================================================="
+      echo "  GENERATOR PHASE VIOLATION"
+      echo "==============================================================="
+      echo "  Generator wrote source files during contract phase:"
+      echo "$changed_files" | sed 's/^/    /'
+      echo ""
+      echo "  Contract phase is for .ralph/contract.json ONLY."
+      echo "  Reverting these changes..."
+      echo "$changed_files" | grep -v "^subprojects/" | while read -r f; do [ -n "$f" ] && git checkout -- "$f" 2>/dev/null || true; done
+      echo "==============================================================="
+      return 1
+    fi
+  fi
+
   if [ ! -f "$CONTRACT_FILE" ]; then
     echo "  ERROR: Generator did not create contract.json"
-
-    # Check if Generator violated phase discipline by writing source code
-    if git rev-parse --git-dir >/dev/null 2>&1; then
-      local changed_files
-      changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
-      if [ -n "$changed_files" ]; then
-        echo ""
-        echo "==============================================================="
-        echo "  PHASE VIOLATION DETECTED"
-        echo "==============================================================="
-        echo "  Generator skipped the contract phase and wrote code directly:"
-        echo "$changed_files" | sed 's/^/    /'
-        echo ""
-        echo "  This is a phase discipline violation."
-        echo "  The Generator must create .ralph/contract.json FIRST."
-        echo ""
-        echo "  Actions:"
-        echo "    1. Revert these files: git checkout -- <files>"
-        echo "    2. Re-run ralph.sh to retry contract negotiation"
-        echo "==============================================================="
-        return 1
-      fi
-    fi
-
     return 1
   fi
   return 0
@@ -526,8 +522,22 @@ verify_evaluator_evaluate_output() {
 # Agent wait with output detection + heartbeat
 # ============================================================
 
+# Check if the agent process for a given phase_label is still running.
+# Returns 0 if alive (kill -0 succeeds), 1 if dead or no pid file.
+_is_agent_alive() {
+  local phase_label="$1"
+  if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
+    local _pid
+    _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
+    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
+      return 0  # alive
+    fi
+  fi
+  return 1  # dead or no pid file
+}
+
 # Check if agent has produced valid contract output (contract phases only).
-# Does NOT need PID — uses PHASE_FILE to determine role.
+# ONLY trusted when agent PID is dead — file-based detection alone is unreliable.
 _check_agent_output() {
   local phase
   phase=$(cat "$PHASE_FILE" 2>/dev/null)
@@ -575,7 +585,8 @@ wait_for_agent() {
 }
 
 # Wait for a sentinel file (generator-build phase).
-# File-based detection: sentinel file > COMPLETE in stdout > timeout.
+# PID-alive gating: while agent is alive, sentinel files are NOT trusted.
+# Exception: COMPLETE in stdout is trusted regardless (agent signals done).
 _wait_for_file() {
   local file="$1" phase_label="$2" desc="$3"
   local elapsed=0 tick=60 timeout=7200
@@ -583,34 +594,39 @@ _wait_for_file() {
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
-    # 1) Sentinel file — agent completed normally
-    [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
-    # 2) COMPLETE in stdout — agent finished, auto-create sentinel
+    # 0) COMPLETE in stdout — trusted regardless of PID (agent signals done)
     if grep -q '<promise>COMPLETE</promise>' "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null; then
       echo "  [$desc] COMPLETE detected — auto-creating sentinel."
       echo "done" > "$file"
       return 0
     fi
-    # 3) Check if agent process exited without producing completion signal
-    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
-      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
-      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
-        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null || echo 0) bytes"
-        return 1
-      fi
+    # 1) Agent still alive? → skip file checks, keep waiting
+    if _is_agent_alive "$phase_label"; then
+      continue
     fi
+    # Agent is dead — now trust file-based signals
+    # 2) Sentinel file — agent completed normally
+    [ -f "$file" ] && echo "  $desc complete ($((elapsed / 60)) min)." && return 0
+    # 3) Agent died without producing completion signal
+    echo "  [DEAD] Agent PID $(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null || echo "unknown") exited without completion. stdout: $(wc -c < "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null || echo 0) bytes"
+    return 1
   done
   echo "  [TIMEOUT] $desc did not complete within $((timeout / 60)) min."
   return 1
 }
 
 # Wait for evaluation.json to appear with valid score.
-# File-based detection: evaluation.json > COMPLETE in stdout > timeout.
+# PID-alive gating: while agent is alive, file-based signals are NOT trusted.
 _wait_for_evaluation() {
   local phase_label="$1" elapsed=0 tick=60 timeout=7200
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
+    # 0) Agent still alive? → skip file checks, keep waiting
+    if _is_agent_alive "$phase_label"; then
+      continue
+    fi
+    # Agent is dead — now trust file-based signals
     # 1) evaluation.json with valid score — normal completion
     if [ -f "$EVALUATION_FILE" ] && [ -s "$EVALUATION_FILE" ]; then
       local s; s=$(jq -r '.overallScore // -1' "$EVALUATION_FILE" 2>/dev/null || echo "-1")
@@ -625,27 +641,27 @@ _wait_for_evaluation() {
       echo "  [Evaluator] COMPLETE detected but no evaluation.json — treating as incomplete."
       return 1
     fi
-    # 3) Check if agent process exited without producing completion signal
-    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
-      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
-      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
-        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null || echo 0) bytes"
-        return 1
-      fi
-    fi
+    # 3) Agent died without producing completion signal
+    echo "  [DEAD] Agent PID $(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null || echo "unknown") exited without completion. stdout: $(wc -c < "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null || echo 0) bytes"
+    return 1
   done
   echo "  [TIMEOUT] No evaluation.json after $((timeout / 60)) min."
   return 1
 }
 
 # Wait for contract-phase agent completion.
-# File-based detection: contract.json > COMPLETE in stdout > timeout.
+# PID-alive gating: while agent is alive, file-based signals are NOT trusted.
 _wait_for_process_or_output() {
   local phase_label="$1"
   local elapsed=0 tick=60 timeout=7200
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
     [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
+    # 0) Agent still alive? → skip file checks, keep waiting
+    if _is_agent_alive "$phase_label"; then
+      continue
+    fi
+    # Agent is dead — now trust file-based signals
     # 1) contract.json with valid output
     if _check_agent_output 2>/dev/null; then
       echo "  [$phase_label] Contract output detected ($((elapsed / 60)) min)."
@@ -656,14 +672,9 @@ _wait_for_process_or_output() {
       echo "  [$phase_label] COMPLETE detected."
       return 0
     fi
-    # 3) Check if agent process exited without producing completion signal
-    if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
-      local _pid; _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
-      if [ -n "$_pid" ] && ! kill -0 "$_pid" 2>/dev/null; then
-        echo "  [DEAD] Agent PID $_pid exited without completion. stdout: $(wc -c < "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null || echo 0) bytes"
-        return 1
-      fi
-    fi
+    # 3) Agent died without producing completion signal
+    echo "  [DEAD] Agent PID $(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null || echo "unknown") exited without completion. stdout: $(wc -c < "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null || echo 0) bytes"
+    return 1
   done
   echo "  [TIMEOUT] $phase_label did not complete within $((timeout / 60)) min."
   return 1
@@ -1533,6 +1544,12 @@ run_harness_mode() {
 
       # Run Evaluator (contract mode)
       echo "  [Evaluator] Reviewing and scoring contract..."
+      # Reset contract status to "proposed" so stale status from previous round
+      # doesn't cause false-positive completion detection during wait
+      if [ -f "$CONTRACT_FILE" ]; then
+        local tmp_ct="${CONTRACT_FILE}.tmp"
+        jq '.status = "proposed"' "$CONTRACT_FILE" > "$tmp_ct" 2>/dev/null && mv "$tmp_ct" "$CONTRACT_FILE"
+      fi
       set_phase "evaluator-contract"
       run_agent "$EVALUATOR_CONTRACT_PROMPT" "contract-round-${round}-evaluator-${story_id}" || true
 
@@ -1580,6 +1597,9 @@ run_harness_mode() {
         run_agent "$GENERATOR_CONTRACT_PROMPT" "contract-extra-round-generator-${story_id}"
 
         if [ -f "$CONTRACT_FILE" ]; then
+          # Reset status before evaluator to prevent stale status false-positive
+          local tmp_cte="${CONTRACT_FILE}.tmp"
+          jq '.status = "proposed"' "$CONTRACT_FILE" > "$tmp_cte" 2>/dev/null && mv "$tmp_cte" "$CONTRACT_FILE"
           set_phase "evaluator-contract"
           run_agent "$EVALUATOR_CONTRACT_PROMPT" "contract-extra-round-evaluator-${story_id}"
 
@@ -1695,6 +1715,16 @@ run_harness_mode() {
         continue
       fi
 
+      # Scope check: modified files must not wildly exceed contract scope
+      if [ -f "$CONTRACT_FILE" ]; then
+        local changed_count
+        changed_count=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | wc -l | tr -d ' ')
+        if [ "${changed_count:-0}" -gt 20 ]; then
+          echo "  [SCOPE WARNING] $changed_count files changed — verify these are all within contract scope."
+          echo "  Contract scope: $(jq -r '.proposedScope // "not specified"' "$CONTRACT_FILE" 2>/dev/null)"
+        fi
+      fi
+
       # Verify contract integrity after Generator run
       if ! verify_contract_integrity "locked"; then
         echo "  WARNING: Generator may have modified locked contract. This build is invalid."
@@ -1746,6 +1776,28 @@ run_harness_mode() {
 
       local overall_pass
       overall_pass=$(jq -r '.overallPass // false' "$EVALUATION_FILE")
+
+      # Cross-validate: recompute overallPass from individual dimension scores
+      local cross_pass
+      cross_pass=$(jq -r '
+        (.scores.functionalCorrectness.score // 0) >= (.scores.functionalCorrectness.threshold // 98) and
+        (.scores.security.score // 0) >= (.scores.security.threshold // 90) and
+        (.scores.maintainability.score // 0) >= (.scores.maintainability.threshold // 75) and
+        (.scores.performance.score // 0) >= (.scores.performance.threshold // 70) and
+        (.scores.designQuality.score // 0) >= (.scores.designQuality.threshold // 80) and
+        (.scores.engineeringCompliance.score // 0) >= (.scores.engineeringCompliance.threshold // 80)
+      ' "$EVALUATION_FILE" 2>/dev/null || echo "false")
+      local criteria_count
+      criteria_count=$(jq -r '.verifiedCriteria | length // 0' "$EVALUATION_FILE" 2>/dev/null || echo "0")
+
+      if [ "$overall_pass" = "true" ] && [ "$cross_pass" != "true" ]; then
+        echo "  [WARNING] overallPass=true but cross-validation failed (dimensions below threshold). Overriding to false."
+        overall_pass="false"
+      fi
+      if [ "$overall_pass" = "true" ] && [ "${criteria_count:-0}" -eq 0 ]; then
+        echo "  [WARNING] overallPass=true but zero verifiedCriteria. Overriding to false."
+        overall_pass="false"
+      fi
 
       echo "  Score: $retry_score/100 | Pass: $overall_pass"
 
