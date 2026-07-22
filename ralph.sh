@@ -638,7 +638,7 @@ _wait_for_evaluation() {
         echo "  [Evaluator] COMPLETE detected, evaluation.json present — accepting."
         return 0
       fi
-      echo "  [Evaluator] COMPLETE detected but no evaluation.json — treating as incomplete."
+      echo "  [Evaluator] COMPLETE detected but no evaluation.json — Evaluator forgot to write output file. Retrying..."
       return 1
     fi
     # 3) Agent died without producing completion signal
