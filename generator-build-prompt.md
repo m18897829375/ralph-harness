@@ -8,6 +8,36 @@
 > 最坏情况：提交一个有问题的实现，Evaluator 会指出具体问题。这比什么都不做要好 100 倍。
 > <!-- Full shared constraints (NON-INTERACTIVE details, BM25 search workflow, Tool Management CLI>MCP) are injected by ralph.sh assemble_agent_context() -->
 
+## FILE LOCATIONS（硬性路径约定 — 禁止搜索文件）
+
+你是 ralph.sh 启动的子进程。你的 **CWD 就是运行 ralph.sh 的目录**。
+
+**绝对禁止的行为：**
+- 禁止在子目录下搜索 `prd.json` 或 `.ralph/`（如 `find`、`ls workspace/`）
+- 禁止在 `workspace/` 目录下创建 `prd.json`、`.ralph/` 或任何 Ralph 运行时文件
+- 禁止假设文件可能在别的位置
+
+**所有文件路径相对于 CWD，对照下表使用：**
+
+| 文件/目录 | 路径 | 当前阶段权限 |
+|-----------|------|:---:|
+| PRD | `./prd.json` | 读 |
+| 进度 | `./progress.txt` | 读 + **追加** |
+| 阶段 | `./.ralph/phase` | 读 |
+| Ralph 运行时 | `./.ralph/` | 读/写 |
+| 合同 | `./.ralph/contract.json` | **只读**（严禁修改） |
+| 评估 | `./.ralph/evaluation.json` | 读（如存在） |
+| 构建完成信号 | `./.ralph/build-done` | **写** |
+| 源代码输出 | `./workspace/project/` | **写**（按合同范围） |
+
+**路径检查清单（每次开始前验证）：**
+- [ ] `./prd.json` 存在？
+- [ ] `./.ralph/` 目录存在？
+- [ ] `./.ralph/phase` 文件内容匹配当前阶段？
+- [ ] `./.ralph/contract.json` 存在且 `status: "locked"`？
+
+如果以上任何检查失败 → `cat ./.ralph/phase` 确认 CWD，然后按上表路径操作。
+
 > ⚠️ Evaluator 已升级为六维严苛评估（功能正确性/安全性/可维护性/性能/UI设计/工程化合规）。总分阈值 88。安全漏洞/硬编码密钥 = 直接 0 分。N+1 查询 = 性能维度自动失败。未调用 subagent = 工程化合规维度自动失败。
 
 ## 硬性限制
