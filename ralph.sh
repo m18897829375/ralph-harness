@@ -318,10 +318,10 @@ $(cat "$CONTRACT_FILE" 2>/dev/null | jq '.' 2>/dev/null || echo "No contract.jso
 \`\`\`
 
 ## PRD Context
-- **Story passes:** $(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .passes' "$PRD_FILE")
-- **Story retries:** $(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .retryCount // 0' "$PRD_FILE")
+- **Story passes:** $(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .passes' "$PRD_FILE" 2>/dev/null || echo "unknown")
+- **Story retries:** $(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .retryCount // 0' "$PRD_FILE" 2>/dev/null || echo "0")
 - **Acceptance criteria:**
-$(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .acceptanceCriteria[]? | "- \(.)"' "$PRD_FILE")
+$(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .acceptanceCriteria[]? | "- \(.)"' "$PRD_FILE" 2>/dev/null || echo "- (unable to read criteria)")
 
 ## What You Need to Decide
 
@@ -1540,7 +1540,7 @@ run_harness_mode() {
         set_phase "generator-contract"
       run_agent "$GENERATOR_CONTRACT_PROMPT" "contract-round-${round}-generator-${story_id}" || true
 
-      verify_contract_phase_output || break
+      verify_contract_phase_output || true
 
       # Run Evaluator (contract mode)
       echo "  [Evaluator] Reviewing and scoring contract..."
@@ -1634,6 +1634,15 @@ run_harness_mode() {
     echo ""
     echo "--- Build & Evaluate Phase ---"
 
+    # Guard: verify git repo is ready for build phase
+    if ! git rev-parse --git-dir >/dev/null 2>&1; then
+      echo "  ERROR: Not a git repository. Build phase requires git."
+      exit 1
+    fi
+    if ! git rev-parse HEAD >/dev/null 2>&1; then
+      echo "  [INIT] Repository has no commits yet. First build will create initial commit."
+    fi
+
     # 清理上次运行残留的 proposed 合同（非 locked = 协商未完成）
     if [ -f "$CONTRACT_FILE" ]; then
       local contract_status
@@ -1697,17 +1706,17 @@ run_harness_mode() {
       echo "  [Generator] Implementing story..."
       set_phase "generator-build"
       local gen_start_head
-      gen_start_head=$(git rev-parse HEAD 2>/dev/null)
+      gen_start_head=$(git rev-parse HEAD 2>/dev/null || echo "0000000000000000000000000000000000000000")
       run_agent "$GENERATOR_BUILD_PROMPT" "build-retry-${retry}-generator-${story_id}" || true
 
       # Detect Generator crash: no commits AND no uncommitted changes = produced nothing
       local gen_end_head
-      gen_end_head=$(git rev-parse HEAD 2>/dev/null)
+      gen_end_head=$(git rev-parse HEAD 2>/dev/null || echo "0000000000000000000000000000000000000000")
       local has_work=false
       if [ "$gen_end_head" != "$gen_start_head" ]; then
         has_work=true
       fi
-      if ! git diff --quiet 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ]; then
+      if ! git diff --quiet 2>/dev/null || [ -n "$(git ls-files --others --exclude-standard 2>/dev/null)" ] || ! git rev-parse HEAD >/dev/null 2>&1; then
         has_work=true
       fi
       if [ "$has_work" = false ]; then
@@ -1718,7 +1727,7 @@ run_harness_mode() {
       # Scope check: modified files must not wildly exceed contract scope
       if [ -f "$CONTRACT_FILE" ]; then
         local changed_count
-        changed_count=$(git diff --name-only HEAD 2>/dev/null | grep -v ".ralph/" | wc -l | tr -d ' ')
+        changed_count=$( { git diff --name-only HEAD 2>/dev/null || git ls-files 2>/dev/null; } | grep -v ".ralph/" | wc -l | tr -d ' ')
         if [ "${changed_count:-0}" -gt 20 ]; then
           echo "  [SCOPE WARNING] $changed_count files changed — verify these are all within contract scope."
           echo "  Contract scope: $(jq -r '.proposedScope // "not specified"' "$CONTRACT_FILE" 2>/dev/null)"
@@ -1741,7 +1750,7 @@ run_harness_mode() {
       if [ "$retry" -gt 0 ]; then
         echo "" >> "$changes_file"
         echo "## 本次重试实际改动的文件（用于 Evaluator 增量评估）" >> "$changes_file"
-        git diff --name-only HEAD~1 2>/dev/null | sed 's/^/- /' >> "$changes_file" || echo "- (无法获取 git diff)" >> "$changes_file"
+        git diff --name-only HEAD~1 2>/dev/null | sed 's/^/- /' >> "$changes_file" || echo "- (无法获取 git diff，可能无历史提交)" >> "$changes_file"
       else
         # First build: capture full diff for reference
         echo "# 首次构建变更摘要 ($story_id)" > "$changes_file"
