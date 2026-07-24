@@ -122,10 +122,12 @@ fi
 
 # ============================================================
 # Tunable constants (change here, not inline)
+# Env-overridable via RALPH_WAIT_* — tests/mock-claude-smoke.sh uses these
+# to run the wait loops fast; production runs use the defaults.
 # ============================================================
-WAIT_TICK=60          # wait-loop poll interval (seconds)
-WAIT_HEARTBEAT=600    # heartbeat log interval (seconds)
-WAIT_TIMEOUT=7200     # max wait per agent phase (seconds, 2h)
+WAIT_TICK="${RALPH_WAIT_TICK:-60}"            # wait-loop poll interval (seconds)
+WAIT_HEARTBEAT="${RALPH_WAIT_HEARTBEAT:-600}" # heartbeat log interval (seconds)
+WAIT_TIMEOUT="${RALPH_WAIT_TIMEOUT:-7200}"    # max wait per agent phase (seconds, 2h)
 SCOPE_WARN_FILE_COUNT=20  # warn when a build changes more files than this
 
 # Evaluation pass thresholds — MUST stay in sync with the six-dimension
@@ -487,7 +489,7 @@ $(cat "$CONTRACT_FILE" 2>/dev/null | jq '.' 2>/dev/null || echo "No contract.jso
 
   echo "$prompt" > "${RALPH_DIR}/user-resolution-prompt.md"
 
-  run_agent "${RALPH_DIR}/user-resolution-prompt.md" "user-resolution-eval-${story_id}"
+  run_agent "${RALPH_DIR}/user-resolution-prompt.md" "user-resolution-eval-${story_id}" || true
 
   if [ -f "$CONTRACT_FILE" ]; then
     local status
@@ -1899,6 +1901,12 @@ run_harness_mode() {
         continue
       fi
 
+      # Surface malformed agent JSON loudly — jq fallbacks below would
+      # otherwise silently read every score as 0/false
+      if ! jq -e . "$EVALUATION_FILE" >/dev/null 2>&1; then
+        echo "  WARNING: evaluation.json is malformed (jq parse error) — scores will read as 0/false"
+      fi
+
       # Save this retry's evaluation and its score
       local retry_score
       retry_score=$(jq -r '.overallScore // 0' "$EVALUATION_FILE" 2>/dev/null || echo "0")
@@ -1968,7 +1976,7 @@ run_harness_mode() {
       else
         echo "  Story $story_id FAILED evaluation (retry $retry of $MAX_RETRIES)."
         local feedback_preview
-        feedback_preview=$(jq -r '.feedback // ""' "$EVALUATION_FILE" | head -3)
+        feedback_preview=$(jq -r '.feedback // ""' "$EVALUATION_FILE" 2>/dev/null | head -3)
         echo "  Feedback: $feedback_preview"
       fi
     done

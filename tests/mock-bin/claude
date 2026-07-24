@@ -1,0 +1,97 @@
+#!/bin/bash
+# Deterministic `claude` stub for ralph.sh smoke tests (no API calls).
+# Behavior is driven by ./.ralph/phase in the current directory:
+#   generator-contract -> writes a proposed contract.json
+#   evaluator-contract -> locks contract.json (score 90)
+#   generator-build    -> writes a file, git-commits, creates build-done
+#   evaluator-evaluate -> writes a passing evaluation.json (or malformed
+#                         JSON when .ralph/mock-malformed-eval exists)
+# Any phase: if .ralph/mock-hang exists, sleep forever (orphan test).
+cat > /dev/null 2>&1   # drain stdin (assembled context) to avoid SIGPIPE
+
+phase=$(cat ./.ralph/phase 2>/dev/null || echo "unknown")
+
+if [ -f ./.ralph/mock-hang ]; then
+  # Hang workload emulating the real claude (native node.exe) process tree:
+  # on Windows use powershell (a NATIVE child process — taskkill //T on the
+  # leaf takes it down, exactly like the real claude.exe tree); on Unix use
+  # plain sleep. The workload pid is recorded so tests can assert reaping.
+  if command -v powershell.exe >/dev/null 2>&1; then
+    powershell.exe -NoProfile -Command "Start-Sleep -Seconds 3600" &
+  else
+    sleep 3600 &
+  fi
+  echo $! > ./.ralph/mock-workload-pid.txt
+  wait
+  exit 0
+fi
+
+case "$phase" in
+  generator-contract)
+    cat > ./.ralph/contract.json <<'EOF'
+{
+  "storyId": "US-001",
+  "storyTitle": "Mock story",
+  "roundNumber": 1,
+  "score": 0,
+  "proposedScope": "Create workspace/project/index.html only",
+  "verificationSteps": [
+    "Open workspace/project/index.html and confirm it contains the mock heading"
+  ],
+  "acceptanceCriteria": [
+    "workspace/project/index.html exists and contains the mock heading"
+  ],
+  "status": "proposed",
+  "history": [
+    {"timestamp": "2026-07-24T00:00:00Z", "actor": "generator", "action": "proposed", "message": "Initial mock proposal"}
+  ],
+  "lockedAt": null,
+  "evaluatorSignature": null,
+  "generatorSignature": "mock-generator"
+}
+EOF
+    ;;
+  evaluator-contract)
+    tmp=$(mktemp)
+    jq '.status = "locked" | .score = 90 | .evaluatorSignature = "mock-evaluator" | .lockedAt = "2026-07-24T00:00:00Z"' \
+      ./.ralph/contract.json > "$tmp" 2>/dev/null && mv "$tmp" ./.ralph/contract.json
+    ;;
+  generator-build)
+    mkdir -p ./workspace/project
+    echo "<h1>mock heading</h1>" > ./workspace/project/index.html
+    git add -A >/dev/null 2>&1
+    git -c user.name=mock -c user.email=mock@test.local commit -q -m "feat: US-001 - Mock story" >/dev/null 2>&1
+    echo done > ./.ralph/build-done
+    ;;
+  evaluator-evaluate)
+    if [ -f ./.ralph/mock-malformed-eval ]; then
+      printf '{broken json \xe4\xb8\xad\xe6\x96\x87' > ./.ralph/evaluation.json
+    else
+      cat > ./.ralph/evaluation.json <<'EOF'
+{
+  "storyId": "US-001",
+  "timestamp": "2026-07-24T00:00:00Z",
+  "retryAttempt": 0,
+  "incrementalEval": false,
+  "contractRef": "contract.json (locked)",
+  "scores": {
+    "functionalCorrectness": { "score": 100, "threshold": 98, "pass": true },
+    "security": { "score": 95, "threshold": 90, "pass": true },
+    "maintainability": { "score": 85, "threshold": 75, "pass": true },
+    "performance": { "score": 80, "threshold": 70, "pass": true },
+    "designQuality": { "score": 85, "threshold": 80, "pass": true },
+    "engineeringCompliance": { "score": 90, "threshold": 80, "pass": true }
+  },
+  "overallScore": 92.5,
+  "overallPass": true,
+  "verifiedCriteria": [
+    { "criterion": "workspace/project/index.html exists and contains the mock heading", "result": "PASS", "evidence": "file created and committed by mock generator" }
+  ],
+  "feedback": ""
+}
+EOF
+    fi
+    ;;
+esac
+
+echo "<promise>COMPLETE</promise>"
