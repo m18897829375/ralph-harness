@@ -121,6 +121,25 @@ if [[ "$MODE" != "harness" && "$MODE" != "simple" ]]; then
 fi
 
 # ============================================================
+# Tunable constants (change here, not inline)
+# ============================================================
+WAIT_TICK=60          # wait-loop poll interval (seconds)
+WAIT_HEARTBEAT=600    # heartbeat log interval (seconds)
+WAIT_TIMEOUT=7200     # max wait per agent phase (seconds, 2h)
+SCOPE_WARN_FILE_COUNT=20  # warn when a build changes more files than this
+
+# Evaluation pass thresholds — MUST stay in sync with the six-dimension
+# table in evaluator-evaluate-prompt.md (used as jq fallbacks when the
+# evaluator omitted per-dimension thresholds in evaluation.json).
+THRESHOLD_FUNCTIONAL=98
+THRESHOLD_SECURITY=90
+THRESHOLD_MAINTAINABILITY=75
+THRESHOLD_PERFORMANCE=70
+THRESHOLD_DESIGN=80
+THRESHOLD_ENGINEERING=80
+THRESHOLD_OVERALL=88
+
+# ============================================================
 # Paths
 # ============================================================
 # SCRIPT_DIR: where Ralph's own files live (generator-prompt.md, evaluator-prompt.md, etc.)
@@ -482,61 +501,65 @@ $(cat "$CONTRACT_FILE" 2>/dev/null | jq '.' 2>/dev/null || echo "No contract.jso
 # Phase discipline verification functions
 # ============================================================
 
+# Detect source-file modifications during a phase that forbids them, print a
+# violation banner, and revert. Shared by all three verify_* functions.
+#   $1 banner title   $2 who-did-what line   $3 rule line
+#   $4 include_submodules (true|false) — evaluator phases also revert submodules
+# Returns 0 when clean, 1 when violations were found (and reverted).
+_revert_phase_violations() {
+  local banner="$1" role_line="$2" rule_line="$3" include_submodules="$4"
+  git rev-parse --git-dir >/dev/null 2>&1 || return 0
+
+  local changed_files
+  changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
+  [ -z "$changed_files" ] && return 0
+
+  echo ""
+  echo "==============================================================="
+  echo "  $banner"
+  echo "==============================================================="
+  echo "  $role_line"
+  echo "$changed_files" | sed 's/^/    /'
+  echo ""
+  echo "  $rule_line"
+  echo "  Reverting these changes..."
+  if [ "$include_submodules" = "true" ]; then
+    git submodule foreach --recursive 'git checkout -- . 2>/dev/null || true' 2>/dev/null || true
+  fi
+  echo "$changed_files" | grep -v "^subprojects/" | while read -r f; do [ -n "$f" ] && git checkout -- "$f" 2>/dev/null || true; done
+  echo "==============================================================="
+  return 1
+}
+
 # Check Generator's output after contract phase — must create contract.json, never write source code
 verify_contract_phase_output() {
   # Always check for phase violations — gen must not write source code during contract phase
-  if git rev-parse --git-dir >/dev/null 2>&1; then
-    local changed_files
-    changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
-    if [ -n "$changed_files" ]; then
-      echo ""
-      echo "==============================================================="
-      echo "  GENERATOR PHASE VIOLATION"
-      echo "==============================================================="
-      echo "  Generator wrote source files during contract phase:"
-      echo "$changed_files" | sed 's/^/    /'
-      echo ""
-      echo "  Contract phase is for .ralph/contract.json ONLY."
-      echo "  Reverting these changes..."
-      echo "$changed_files" | grep -v "^subprojects/" | while read -r f; do [ -n "$f" ] && git checkout -- "$f" 2>/dev/null || true; done
-      echo "==============================================================="
-      return 1
-    fi
-  fi
+  local rc=0
+  _revert_phase_violations "GENERATOR PHASE VIOLATION" \
+    "Generator wrote source files during contract phase:" \
+    "Contract phase is for .ralph/contract.json ONLY." \
+    "false" || rc=1
 
   if [ ! -f "$CONTRACT_FILE" ]; then
     echo "  ERROR: Generator did not create contract.json"
-    return 1
+    rc=1
   fi
-  return 0
+  return $rc
 }
 
 # Check Evaluator's output after contract review — must preserve contract.json, never write source code
 verify_evaluator_contract_output() {
+  local rc=0
   if [ ! -f "$CONTRACT_FILE" ]; then
     echo "  ERROR: Evaluator removed or did not preserve contract.json"
-    return 1
+    rc=1
   fi
-
-  if git rev-parse --git-dir >/dev/null 2>&1; then
-    local changed_files
-    changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
-    if [ -n "$changed_files" ]; then
-      echo ""
-      echo "==============================================================="
-      echo "  EVALUATOR PHASE VIOLATION"
-      echo "==============================================================="
-      echo "  Evaluator modified source files during contract review:"
-      echo "$changed_files" | sed 's/^/    /'
-      echo ""
-      echo "  Evaluator must only review contract.json, never modify code."
-      echo "  Reverting these changes..."
-      git submodule foreach --recursive 'git checkout -- . 2>/dev/null || true' 2>/dev/null || true
-      echo "$changed_files" | grep -v "^subprojects/" | while read -r f; do [ -n "$f" ] && git checkout -- "$f" 2>/dev/null || true; done
-      echo "==============================================================="
-    fi
-  fi
-  return 0
+  # Violations are reverted automatically; they don't change the verdict
+  _revert_phase_violations "EVALUATOR PHASE VIOLATION" \
+    "Evaluator modified source files during contract review:" \
+    "Evaluator must only review contract.json, never modify code." \
+    "true" || true
+  return $rc
 }
 
 # Check Evaluator's output after evaluation — must create evaluation.json, never write source code
@@ -544,25 +567,10 @@ verify_evaluator_evaluate_output() {
   if [ ! -f "$EVALUATION_FILE" ]; then
     echo "  WARNING: Evaluator did not create evaluation.json"
   fi
-
-  if git rev-parse --git-dir >/dev/null 2>&1; then
-    local changed_files
-    changed_files=$(git diff --ignore-submodules=all --name-only HEAD 2>/dev/null | grep -v ".ralph/" | grep -v "CLAUDE.md" | grep -v "AGENTS.md" | grep -v "prd.json" | grep -v "progress.txt" | grep -v "^subprojects/" | head -5)
-    if [ -n "$changed_files" ]; then
-      echo ""
-      echo "==============================================================="
-      echo "  EVALUATOR PHASE VIOLATION"
-      echo "==============================================================="
-      echo "  Evaluator modified source files during evaluation:"
-      echo "$changed_files" | sed 's/^/    /'
-      echo ""
-      echo "  Evaluator must ONLY evaluate, never modify code."
-      echo "  Reverting these changes..."
-      git submodule foreach --recursive 'git checkout -- . 2>/dev/null || true' 2>/dev/null || true
-      echo "$changed_files" | grep -v "^subprojects/" | while read -r f; do [ -n "$f" ] && git checkout -- "$f" 2>/dev/null || true; done
-      echo "==============================================================="
-    fi
-  fi
+  _revert_phase_violations "EVALUATOR PHASE VIOLATION" \
+    "Evaluator modified source files during evaluation:" \
+    "Evaluator must ONLY evaluate, never modify code." \
+    "true" || true
   return 0
 }
 
@@ -662,11 +670,11 @@ wait_for_agent() {
 # Exception: COMPLETE in stdout is trusted regardless (agent signals done).
 _wait_for_file() {
   local file="$1" phase_label="$2" desc="$3"
-  local elapsed=0 tick=60 timeout=7200
+  local elapsed=0 tick=$WAIT_TICK timeout=$WAIT_TIMEOUT
   rm -f "$file"
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
-    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
+    [ $((elapsed % WAIT_HEARTBEAT)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $desc, $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
     # 0) COMPLETE in stdout — trusted regardless of PID (agent signals done)
     if grep -q '<promise>COMPLETE</promise>' "${RALPH_DIR}/${phase_label}-stdout.log" 2>/dev/null; then
       echo "  [$desc] COMPLETE detected — auto-creating sentinel."
@@ -691,10 +699,10 @@ _wait_for_file() {
 # Wait for evaluation.json to appear with valid score.
 # PID-alive gating: while agent is alive, file-based signals are NOT trusted.
 _wait_for_evaluation() {
-  local phase_label="$1" elapsed=0 tick=60 timeout=7200
+  local phase_label="$1" elapsed=0 tick=$WAIT_TICK timeout=$WAIT_TIMEOUT
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
-    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
+    [ $((elapsed % WAIT_HEARTBEAT)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
     # 0) Agent still alive? → skip file checks, keep waiting
     if _is_agent_alive "$phase_label"; then
       continue
@@ -726,10 +734,10 @@ _wait_for_evaluation() {
 # PID-alive gating: while agent is alive, file-based signals are NOT trusted.
 _wait_for_process_or_output() {
   local phase_label="$1"
-  local elapsed=0 tick=60 timeout=7200
+  local elapsed=0 tick=$WAIT_TICK timeout=$WAIT_TIMEOUT
   while [ $elapsed -lt $timeout ]; do
     sleep $tick; elapsed=$((elapsed + tick))
-    [ $((elapsed % 600)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
+    [ $((elapsed % WAIT_HEARTBEAT)) -eq 0 ] && echo "  [HEARTBEAT] $phase_label — $((elapsed / 60)) min, stderr: $(wc -c < "${RALPH_DIR}/${phase_label}-stderr.log" 2>/dev/null || echo 0) bytes"
     # 0) Agent still alive? → skip file checks, keep waiting
     if _is_agent_alive "$phase_label"; then
       continue
@@ -1843,7 +1851,7 @@ run_harness_mode() {
       if [ -f "$CONTRACT_FILE" ]; then
         local changed_count
         changed_count=$( { git diff --name-only HEAD 2>/dev/null || git ls-files 2>/dev/null; } | grep -v ".ralph/" | wc -l | tr -d ' ')
-        if [ "${changed_count:-0}" -gt 20 ]; then
+        if [ "${changed_count:-0}" -gt "$SCOPE_WARN_FILE_COUNT" ]; then
           echo "  [SCOPE WARNING] $changed_count files changed — verify these are all within contract scope."
           echo "  Contract scope: $(jq -r '.proposedScope // "not specified"' "$CONTRACT_FILE" 2>/dev/null)"
         fi
@@ -1905,15 +1913,23 @@ run_harness_mode() {
       local overall_pass
       overall_pass=$(jq -r '.overallPass // false' "$EVALUATION_FILE" 2>/dev/null || echo "false")
 
-      # Cross-validate: recompute overallPass from individual dimension scores
+      # Cross-validate: recompute overallPass from individual dimension scores.
+      # Threshold fallbacks come from the THRESHOLD_* constants (must match
+      # the six-dimension table in evaluator-evaluate-prompt.md).
       local cross_pass
-      cross_pass=$(jq -r '
-        (.scores.functionalCorrectness.score // 0) >= (.scores.functionalCorrectness.threshold // 98) and
-        (.scores.security.score // 0) >= (.scores.security.threshold // 90) and
-        (.scores.maintainability.score // 0) >= (.scores.maintainability.threshold // 75) and
-        (.scores.performance.score // 0) >= (.scores.performance.threshold // 70) and
-        (.scores.designQuality.score // 0) >= (.scores.designQuality.threshold // 80) and
-        (.scores.engineeringCompliance.score // 0) >= (.scores.engineeringCompliance.threshold // 80)
+      cross_pass=$(jq -r \
+        --argjson func_t "$THRESHOLD_FUNCTIONAL" \
+        --argjson sec_t "$THRESHOLD_SECURITY" \
+        --argjson maint_t "$THRESHOLD_MAINTAINABILITY" \
+        --argjson perf_t "$THRESHOLD_PERFORMANCE" \
+        --argjson design_t "$THRESHOLD_DESIGN" \
+        --argjson eng_t "$THRESHOLD_ENGINEERING" \
+        '(.scores.functionalCorrectness.score // 0) >= (.scores.functionalCorrectness.threshold // $func_t) and
+        (.scores.security.score // 0) >= (.scores.security.threshold // $sec_t) and
+        (.scores.maintainability.score // 0) >= (.scores.maintainability.threshold // $maint_t) and
+        (.scores.performance.score // 0) >= (.scores.performance.threshold // $perf_t) and
+        (.scores.designQuality.score // 0) >= (.scores.designQuality.threshold // $design_t) and
+        (.scores.engineeringCompliance.score // 0) >= (.scores.engineeringCompliance.threshold // $eng_t)
       ' "$EVALUATION_FILE" 2>/dev/null || echo "false")
       local criteria_count
       criteria_count=$(jq -r '.verifiedCriteria | length // 0' "$EVALUATION_FILE" 2>/dev/null || echo "0")
