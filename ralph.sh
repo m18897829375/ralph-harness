@@ -213,8 +213,6 @@ fi
 # ============================================================
 # Signal handling & cleanup
 # ============================================================
-RALPH_NORMAL_EXIT=false
-
 trap 'cleanup SIGINT' SIGINT
 trap 'cleanup SIGTERM' SIGTERM
 trap 'cleanup EXIT' EXIT
@@ -360,7 +358,6 @@ exit_for_user_resolution() {
   echo "  Then re-run ralph.sh to continue."
   echo "==============================================================="
 
-  RALPH_NORMAL_EXIT=true
   exit 2  # 2 = contract negotiation failed, needs human intervention
 }
 
@@ -818,7 +815,7 @@ assemble_agent_context() {
   # 2.5 Pre-search: auto-inject top skills matching current story
   if [ -f "$SEARCH_SCRIPT" ] && [ -n "$INDEX_DIR" ] && [ -f "$PRD_FILE" ]; then
     local STORY_TITLE
-    STORY_TITLE=$(jq -r '[.userStories[] | select(.passes == false)] | first | .title // empty' "$PRD_FILE" 2>/dev/null)
+    STORY_TITLE=$(jq -r '[.userStories[] | select(.passes == false)] | first | .title // empty' "$PRD_FILE" 2>/dev/null || echo "")
     if [ -n "$STORY_TITLE" ]; then
       echo "=== PRE-SEARCH RESULTS ==="
       echo "Auto-searched top skills for story: $STORY_TITLE"
@@ -875,7 +872,7 @@ for r in results[:5]:
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== CURRENT CONTRACT ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION ==="
-        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
+        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null || true
       fi
       ;;
     generator-build)
@@ -891,7 +888,7 @@ for r in results[:5]:
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== LOCKED CONTRACT (DO NOT MODIFY) ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION FEEDBACK ==="
-        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
+        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null || true
       fi
       echo ""
       echo "=== REQUIRED SUBAGENTS (MUST invoke at least one) ==="
@@ -912,7 +909,7 @@ for r in results[:5]:
       [ -f "$CONTRACT_FILE" ] && echo "" && echo "=== LOCKED CONTRACT ===" && cat "$CONTRACT_FILE"
       if [ -f "$EVALUATION_FILE" ]; then
         echo ""; echo "=== PREVIOUS EVALUATION ==="
-        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null
+        jq '{overallScore, feedback, verifiedCriteria: [.verifiedCriteria[]?|select(.result=="FAIL")]}' "$EVALUATION_FILE" 2>/dev/null || true
       fi
       echo ""
       echo "=== REQUIRED SUBAGENTS (MUST invoke before submitting evaluation) ==="
@@ -1184,17 +1181,28 @@ generate_cost_report() {
 }
 
 # ============================================================
+# Helper: jq with guaranteed fallback — never fails under set -e.
+# Agent-written JSON (contract.json / evaluation.json / prd.json) may be
+# malformed or mis-encoded; a bare jq failure would kill the script silently.
+# Usage: jq_safe <file> <filter> <default>
+# NOTE: for jq calls needing --arg, use inline `2>/dev/null || echo <default>`.
+# ============================================================
+jq_safe() {
+  jq -r "$2" "$1" 2>/dev/null || echo "$3"
+}
+
+# ============================================================
 # Helper: Get next pending story
 # ============================================================
 get_pending_story_id() {
-  jq -r '[.userStories[] | select(.passes == false)] | sort_by(.priority) | .[0].id // empty' "$PRD_FILE"
+  jq_safe "$PRD_FILE" '[.userStories[] | select(.passes == false)] | sort_by(.priority) | .[0].id // empty' ""
 }
 
 # ============================================================
 # Helper: Count pending stories
 # ============================================================
 count_pending_stories() {
-  jq -r '[.userStories[] | select(.passes == false)] | length' "$PRD_FILE"
+  jq_safe "$PRD_FILE" '[.userStories[] | select(.passes == false)] | length' "0"
 }
 
 # ============================================================
@@ -1212,10 +1220,17 @@ all_stories_pass() {
 mark_story_passed() {
   local story_id="$1"
   local tmp_file="${PRD_FILE}.tmp"
-  jq --arg id "$story_id" \
+  # Guard: only replace prd.json when jq succeeded — otherwise the tmp file
+  # may be empty/partial and mv would clobber prd.json with garbage.
+  if jq --arg id "$story_id" \
     '(.userStories[] | select(.id == $id) | .passes) |= true' \
-    "$PRD_FILE" > "$tmp_file"
-  mv "$tmp_file" "$PRD_FILE"
+    "$PRD_FILE" > "$tmp_file" 2>/dev/null; then
+    mv "$tmp_file" "$PRD_FILE"
+  else
+    rm -f "$tmp_file"
+    echo "  WARNING: mark_story_passed: jq failed on prd.json — story NOT marked (continuing)" >&2
+    return 1
+  fi
 }
 
 # ============================================================
@@ -1233,23 +1248,23 @@ update_prd_evaluation() {
     local retry_attempt
     retry_attempt=$(jq -r '.retryAttempt // 0' "$EVALUATION_FILE" 2>/dev/null || echo "0")
 
-    jq --arg id "$story_id" \
+    if jq --arg id "$story_id" \
        --argjson pass "$overall_pass" \
        --argjson score "$overall_score" \
        --argjson retry "$retry_attempt" \
-       --argjson func_score "$(jq -r '.scores.functionalCorrectness.score // 0' "$EVALUATION_FILE")" \
-       --argjson func_pass "$(jq -r '.scores.functionalCorrectness.pass // false' "$EVALUATION_FILE")" \
-       --argjson sec_score "$(jq -r '.scores.security.score // 0' "$EVALUATION_FILE")" \
-       --argjson sec_pass "$(jq -r '.scores.security.pass // false' "$EVALUATION_FILE")" \
-       --argjson maint_score "$(jq -r '.scores.maintainability.score // 0' "$EVALUATION_FILE")" \
-       --argjson maint_pass "$(jq -r '.scores.maintainability.pass // false' "$EVALUATION_FILE")" \
-       --argjson perf_score "$(jq -r '.scores.performance.score // 0' "$EVALUATION_FILE")" \
-       --argjson perf_pass "$(jq -r '.scores.performance.pass // false' "$EVALUATION_FILE")" \
-       --argjson design_score "$(jq -r '.scores.designQuality.score // 0' "$EVALUATION_FILE")" \
-       --argjson design_pass "$(jq -r '.scores.designQuality.pass // false' "$EVALUATION_FILE")" \
-       --argjson eng_score "$(jq -r '.scores.engineeringCompliance.score // 0' "$EVALUATION_FILE")" \
-       --argjson eng_pass "$(jq -r '.scores.engineeringCompliance.pass // false' "$EVALUATION_FILE")" \
-       --arg feedback "$(jq -r '.feedback // ""' "$EVALUATION_FILE")" \
+       --argjson func_score "$(jq -r '.scores.functionalCorrectness.score // 0' "$EVALUATION_FILE" 2>/dev/null || echo 0)" \
+       --argjson func_pass "$(jq -r '.scores.functionalCorrectness.pass // false' "$EVALUATION_FILE" 2>/dev/null || echo false)" \
+       --argjson sec_score "$(jq -r '.scores.security.score // 0' "$EVALUATION_FILE" 2>/dev/null || echo 0)" \
+       --argjson sec_pass "$(jq -r '.scores.security.pass // false' "$EVALUATION_FILE" 2>/dev/null || echo false)" \
+       --argjson maint_score "$(jq -r '.scores.maintainability.score // 0' "$EVALUATION_FILE" 2>/dev/null || echo 0)" \
+       --argjson maint_pass "$(jq -r '.scores.maintainability.pass // false' "$EVALUATION_FILE" 2>/dev/null || echo false)" \
+       --argjson perf_score "$(jq -r '.scores.performance.score // 0' "$EVALUATION_FILE" 2>/dev/null || echo 0)" \
+       --argjson perf_pass "$(jq -r '.scores.performance.pass // false' "$EVALUATION_FILE" 2>/dev/null || echo false)" \
+       --argjson design_score "$(jq -r '.scores.designQuality.score // 0' "$EVALUATION_FILE" 2>/dev/null || echo 0)" \
+       --argjson design_pass "$(jq -r '.scores.designQuality.pass // false' "$EVALUATION_FILE" 2>/dev/null || echo false)" \
+       --argjson eng_score "$(jq -r '.scores.engineeringCompliance.score // 0' "$EVALUATION_FILE" 2>/dev/null || echo 0)" \
+       --argjson eng_pass "$(jq -r '.scores.engineeringCompliance.pass // false' "$EVALUATION_FILE" 2>/dev/null || echo false)" \
+       --arg feedback "$(jq -r '.feedback // ""' "$EVALUATION_FILE" 2>/dev/null || echo "")" \
       '(.userStories[] | select(.id == $id) | .retryCount) |= $retry |
        (.userStories[] | select(.id == $id) | .evaluation.overallScore) |= $score |
        (.userStories[] | select(.id == $id) | .evaluation.overallPass) |= $pass |
@@ -1266,8 +1281,13 @@ update_prd_evaluation() {
        (.userStories[] | select(.id == $id) | .evaluation.designQuality.pass) |= $design_pass |
        (.userStories[] | select(.id == $id) | .evaluation.engineeringCompliance.score) |= $eng_score |
        (.userStories[] | select(.id == $id) | .evaluation.engineeringCompliance.pass) |= $eng_pass' \
-      "$PRD_FILE" > "$tmp_file"
-    mv "$tmp_file" "$PRD_FILE"
+      "$PRD_FILE" > "$tmp_file" 2>/dev/null; then
+      mv "$tmp_file" "$PRD_FILE"
+    else
+      rm -f "$tmp_file"
+      echo "  WARNING: update_prd_evaluation: jq failed — prd.json unchanged (continuing)" >&2
+      return 1
+    fi
   fi
 }
 
@@ -1311,9 +1331,13 @@ run_simple_mode() {
     echo "==============================================================="
 
     set_phase "simple"
-    OUTPUT=$(run_agent "$LEGACY_PROMPT" "simple-iteration-$i")
+    # NOTE: run directly, NOT via OUTPUT=$(run_agent ...) — command substitution
+    # runs run_agent in a subshell, hiding the background agent job from this
+    # shell's jobs table (breaks cleanup) and capturing only wait_for_agent's
+    # echo output instead of the agent's stdout (breaks COMPLETE detection).
+    run_agent "$LEGACY_PROMPT" "simple-iteration-$i" || true
 
-    if echo "$OUTPUT" | grep -q "<promise>COMPLETE</promise>"; then
+    if grep -q "<promise>COMPLETE</promise>" "${RALPH_DIR}/simple-iteration-$i-stdout.log" 2>/dev/null; then
       echo ""
       echo "Ralph completed all tasks!"
       echo "Completed at iteration $i of $MAX_ITERATIONS"
@@ -1352,7 +1376,7 @@ generate_audit_report() {
   echo ""
   echo "  Story Evaluation Summary:"
   echo "  -------------------------"
-  jq -r '.userStories[] | "  \(.id): \(.title)\n    Passed: \(.passes) | BestEffort: \(.bestEffort // false) | Retries: \(.retryCount // 0)\n    Score: \(.evaluation.overallScore // "N/A") | F:\(.evaluation.functionalCorrectness.score // "?") | S:\(.evaluation.security.score // "?") | M:\(.evaluation.maintainability.score // "?") | P:\(.evaluation.performance.score // "?") | D:\(.evaluation.designQuality.score // "?") | E:\(.evaluation.engineeringCompliance.score // "?")"' "$PRD_FILE"
+  jq -r '.userStories[] | "  \(.id): \(.title)\n    Passed: \(.passes) | BestEffort: \(.bestEffort // false) | Retries: \(.retryCount // 0)\n    Score: \(.evaluation.overallScore // "N/A") | F:\(.evaluation.functionalCorrectness.score // "?") | S:\(.evaluation.security.score // "?") | M:\(.evaluation.maintainability.score // "?") | P:\(.evaluation.performance.score // "?") | D:\(.evaluation.designQuality.score // "?") | E:\(.evaluation.engineeringCompliance.score // "?")"' "$PRD_FILE" 2>/dev/null || echo "  (audit: unable to parse prd.json)"
 
   # Flag potential evaluator strictness/leniency issues
   echo ""
@@ -1361,18 +1385,18 @@ generate_audit_report() {
 
   # Find stories that passed with very low scores (possible leniency)
   local low_score_passes
-  low_score_passes=$(jq -r '[.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 80)] | length' "$PRD_FILE")
+  low_score_passes=$(jq -r '[.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 80)] | length' "$PRD_FILE" 2>/dev/null || echo "0")
   if [ "$low_score_passes" -gt 0 ]; then
-    echo "  WARNING: $low_score_passes story(s) passed with score < 70 (possible evaluator leniency):"
-    jq -r '.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 80) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
+    echo "  WARNING: $low_score_passes story(s) passed with score < 80 (possible evaluator leniency):"
+    jq -r '.userStories[] | select(.passes == true and .evaluation.overallScore != null and .evaluation.overallScore < 80) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE" 2>/dev/null || true
   fi
 
   # Find stories that failed despite high scores (possible evaluator strictness)
   local high_score_fails
-  high_score_fails=$(jq -r '[.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 90)] | length' "$PRD_FILE")
+  high_score_fails=$(jq -r '[.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 90)] | length' "$PRD_FILE" 2>/dev/null || echo "0")
   if [ "$high_score_fails" -gt 0 ]; then
-    echo "  NOTE: $high_score_fails story(s) failed despite score >= 80 (possible evaluator strictness):"
-    jq -r '.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 90) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE"
+    echo "  NOTE: $high_score_fails story(s) failed despite score >= 90 (possible evaluator strictness):"
+    jq -r '.userStories[] | select(.passes == false and .evaluation.overallScore != null and .evaluation.overallScore >= 90) | "    - \(.id) (score: \(.evaluation.overallScore))"' "$PRD_FILE" 2>/dev/null || true
   fi
 
   # Summary statistics
@@ -1380,11 +1404,11 @@ generate_audit_report() {
   echo "  Summary Statistics:"
   echo "  -------------------"
   local total_stories
-  total_stories=$(jq -r '.userStories | length' "$PRD_FILE")
+  total_stories=$(jq -r '.userStories | length' "$PRD_FILE" 2>/dev/null || echo "0")
   local passed
-  passed=$(jq -r '[.userStories[] | select(.passes == true)] | length' "$PRD_FILE")
+  passed=$(jq -r '[.userStories[] | select(.passes == true)] | length' "$PRD_FILE" 2>/dev/null || echo "0")
   local best_effort_count
-  best_effort_count=$(jq -r '[.userStories[] | select(.bestEffort == true)] | length' "$PRD_FILE")
+  best_effort_count=$(jq -r '[.userStories[] | select(.bestEffort == true)] | length' "$PRD_FILE" 2>/dev/null || echo "0")
   local avg_score
   avg_score=$(jq -r '[.userStories[] | .evaluation.overallScore // 0] | add / length | . * 100 | round / 100' "$PRD_FILE" 2>/dev/null || echo "N/A")
 
@@ -1466,7 +1490,7 @@ run_harness_mode() {
     fi
 
     local story_title
-    story_title=$(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .title' "$PRD_FILE")
+    story_title=$(jq -r --arg id "$story_id" '.userStories[] | select(.id == $id) | .title' "$PRD_FILE" 2>/dev/null || echo "")
 
     echo ""
     echo "==============================================================="
@@ -1496,7 +1520,6 @@ run_harness_mode() {
       fi
       if [ "$confirm" != "y" ] && [ "$confirm" != "Y" ]; then
         echo "  Aborted. Remove .ralph/user-resolution.md and re-run ralph.sh."
-        RALPH_NORMAL_EXIT=true
         exit 1
       fi
       echo "  Confirmed. Sending to Evaluator..."
@@ -1553,12 +1576,13 @@ run_harness_mode() {
       set_phase "evaluator-contract"
       run_agent "$EVALUATOR_CONTRACT_PROMPT" "contract-round-${round}-evaluator-${story_id}" || true
 
-      verify_evaluator_contract_output
+      verify_evaluator_contract_output || true
 
       # Save this round's contract and its score
       local round_score
       round_score=$(jq -r '.score // 0' "$CONTRACT_FILE" 2>/dev/null || echo "0")
-      cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${round}.json"
+      [ -f "$CONTRACT_FILE" ] && cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${round}.json" \
+        || echo "  WARNING: contract.json missing — skipping round ${round} snapshot"
       echo "$round $round_score" >> "${RALPH_DIR}/contract-scores.txt"
       echo "  Contract score: $round_score/100"
 
@@ -1594,20 +1618,21 @@ run_harness_mode() {
         echo ""
         echo "  Last round was rejected. Giving Generator one extra revision chance..."
         set_phase "generator-contract"
-        run_agent "$GENERATOR_CONTRACT_PROMPT" "contract-extra-round-generator-${story_id}"
+        run_agent "$GENERATOR_CONTRACT_PROMPT" "contract-extra-round-generator-${story_id}" || true
 
         if [ -f "$CONTRACT_FILE" ]; then
           # Reset status before evaluator to prevent stale status false-positive
           local tmp_cte="${CONTRACT_FILE}.tmp"
           jq '.status = "proposed"' "$CONTRACT_FILE" > "$tmp_cte" 2>/dev/null && mv "$tmp_cte" "$CONTRACT_FILE"
           set_phase "evaluator-contract"
-          run_agent "$EVALUATOR_CONTRACT_PROMPT" "contract-extra-round-evaluator-${story_id}"
+          run_agent "$EVALUATOR_CONTRACT_PROMPT" "contract-extra-round-evaluator-${story_id}" || true
 
           if [ -f "$CONTRACT_FILE" ]; then
             local extra_score
             extra_score=$(jq -r '.score // 0' "$CONTRACT_FILE" 2>/dev/null || echo "0")
             local extra_round=$((MAX_CONTRACT_ROUNDS + 1))
-            cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${extra_round}.json"
+            [ -f "$CONTRACT_FILE" ] && cp "$CONTRACT_FILE" "${RALPH_DIR}/contract-round-${extra_round}.json" \
+              || echo "  WARNING: contract.json missing — skipping extra round snapshot"
             echo "$extra_round $extra_score" >> "${RALPH_DIR}/contract-scores.txt"
 
             local extra_status
@@ -1685,7 +1710,7 @@ run_harness_mode() {
 
           echo "## 上次评估反馈摘要" >> "$changes_file"
           local prev_feedback
-          prev_feedback=$(jq -r '.feedback // "无"' "$EVALUATION_FILE")
+          prev_feedback=$(jq -r '.feedback // "无"' "$EVALUATION_FILE" 2>/dev/null || echo "无")
           echo "$prev_feedback" | head -15 >> "$changes_file"
         fi
 
@@ -1738,10 +1763,14 @@ run_harness_mode() {
       if ! verify_contract_integrity "locked"; then
         echo "  WARNING: Generator may have modified locked contract. This build is invalid."
         local tmp_file="${PRD_FILE}.tmp"
-        jq --arg id "$story_id" \
+        if jq --arg id "$story_id" \
           '(.userStories[] | select(.id == $id) | .retryCount) |= (. // 0) + 1' \
-          "$PRD_FILE" > "$tmp_file"
-        mv "$tmp_file" "$PRD_FILE"
+          "$PRD_FILE" > "$tmp_file" 2>/dev/null; then
+          mv "$tmp_file" "$PRD_FILE"
+        else
+          rm -f "$tmp_file"
+          echo "  WARNING: retryCount increment failed — prd.json unchanged (continuing)" >&2
+        fi
         continue
       fi
 
@@ -1774,17 +1803,17 @@ run_harness_mode() {
 
       # Save this retry's evaluation and its score
       local retry_score
-      retry_score=$(jq -r '.overallScore // 0' "$EVALUATION_FILE")
+      retry_score=$(jq -r '.overallScore // 0' "$EVALUATION_FILE" 2>/dev/null || echo "0")
       local retry_attempt
-      retry_attempt=$(jq -r '.retryAttempt // 0' "$EVALUATION_FILE")
+      retry_attempt=$(jq -r '.retryAttempt // 0' "$EVALUATION_FILE" 2>/dev/null || echo "0")
       cp "$EVALUATION_FILE" "${RALPH_DIR}/evaluation-retry-${retry_attempt}.json"
       echo "$retry_attempt $retry_score" >> "${RALPH_DIR}/evaluation-scores.txt"
 
       # Update prd.json with evaluation data
-      update_prd_evaluation "$story_id"
+      update_prd_evaluation "$story_id" || echo "  WARNING: failed to record evaluation in prd.json (continuing)"
 
       local overall_pass
-      overall_pass=$(jq -r '.overallPass // false' "$EVALUATION_FILE")
+      overall_pass=$(jq -r '.overallPass // false' "$EVALUATION_FILE" 2>/dev/null || echo "false")
 
       # Cross-validate: recompute overallPass from individual dimension scores
       local cross_pass
@@ -1827,7 +1856,7 @@ run_harness_mode() {
 
       if [ "$overall_pass" = "true" ]; then
         echo "  Story $story_id PASSED evaluation!"
-        mark_story_passed "$story_id"
+        mark_story_passed "$story_id" || echo "  WARNING: failed to mark story passed in prd.json (continuing)"
         story_passed=true
         break
       else
@@ -1855,15 +1884,19 @@ run_harness_mode() {
         cp "${RALPH_DIR}/evaluation-retry-${best_retry}.json" "$EVALUATION_FILE"
 
         # Update prd.json with best-effort pass
-        update_prd_evaluation "$story_id"
+        update_prd_evaluation "$story_id" || echo "  WARNING: failed to record evaluation in prd.json (continuing)"
         local tmp_file="${PRD_FILE}.tmp"
-        jq --arg id "$story_id" \
+        if jq --arg id "$story_id" \
            --arg note "BEST-EFFORT: ${MAX_RETRIES}次重试均未达标，选择第${best_retry}次（评分${best_score}/100）作为最终结果" \
            '(.userStories[] | select(.id == $id) | .passes) |= true |
             (.userStories[] | select(.id == $id) | .bestEffort) |= true |
             (.userStories[] | select(.id == $id) | .notes) |= (if . == "" then $note else . + " | " + $note end)' \
-           "$PRD_FILE" > "$tmp_file"
-        mv "$tmp_file" "$PRD_FILE"
+           "$PRD_FILE" > "$tmp_file" 2>/dev/null; then
+          mv "$tmp_file" "$PRD_FILE"
+        else
+          rm -f "$tmp_file"
+          echo "  WARNING: best-effort prd.json update failed — story NOT marked (continuing)" >&2
+        fi
 
         echo "  Story $story_id marked as passed (best-effort)."
         story_passed=true
@@ -1871,12 +1904,16 @@ run_harness_mode() {
         echo "  ERROR: No evaluation backups found. Story failed."
         # Force-skip to prevent infinite re-negotiation loop
         local tmp_file="${PRD_FILE}.tmp"
-        jq --arg id "$story_id" \
+        if jq --arg id "$story_id" \
           '(.userStories[] | select(.id == $id) | .passes) |= true |
            (.userStories[] | select(.id == $id) | .bestEffort) |= true |
            (.userStories[] | select(.id == $id) | .notes) |= (if . == "" then "MANUAL REVIEW: Evaluator produced no valid evaluation" else . + " | MANUAL REVIEW: no evaluation" end)' \
-          "$PRD_FILE" > "$tmp_file"
-        mv "$tmp_file" "$PRD_FILE"
+          "$PRD_FILE" > "$tmp_file" 2>/dev/null; then
+          mv "$tmp_file" "$PRD_FILE"
+        else
+          rm -f "$tmp_file"
+          echo "  WARNING: force-skip prd.json update failed — story NOT marked (continuing)" >&2
+        fi
       fi
     fi
 
@@ -1898,11 +1935,9 @@ run_harness_mode() {
     if [ "$ONE_SHOT" = true ]; then
       if all_stories_pass; then
         echo "All stories complete. (one-shot)"
-        RALPH_NORMAL_EXIT=true
         exit 0
       else
         echo "One story done. Exit for next invocation. (one-shot)"
-        RALPH_NORMAL_EXIT=true
         exit 1
       fi
     fi
