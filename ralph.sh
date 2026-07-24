@@ -19,7 +19,14 @@ else
   export LC_ALL=C
 fi
 set -e
+set -E  # ERR trap must also fire inside functions/subshells (errtrace)
 export LANG="$LC_ALL"
+
+# Global ERR trap: convert silent set -e deaths into actionable diagnostics.
+# Only fires on UNGUARDED command failures (i.e. right before set -e kills
+# the script); guarded commands (|| true, if/while conditions) never trigger it.
+# Diagnostics also appended to .ralph/crash.log for post-mortem analysis.
+trap '_ec=$?; _line=$LINENO; _cmd=$BASH_COMMAND; echo "[FATAL] ralph.sh died: line $_line, exit $_ec, phase=$(cat "$PHASE_FILE" 2>/dev/null || echo unknown), cmd: $_cmd" >&2; echo "[FATAL] line=$_line code=$_ec phase=$(cat "$PHASE_FILE" 2>/dev/null || echo unknown) cmd=<$_cmd>" >> "${RALPH_DIR:-.}/crash.log" 2>/dev/null || true' ERR
 
 # ============================================================
 # Parse arguments
@@ -165,6 +172,12 @@ LEGACY_PROMPT="$SCRIPT_DIR/CLAUDE.md"
 # Ensure runtime directory exists
 mkdir -p "$RALPH_DIR"
 
+# Remove stale agent pid files from previous runs — ralph.sh just started,
+# so any tracked pid file present is stale by definition. Prevents cleanup
+# from killing an unrelated process that reused an old pid.
+# (*-pid.txt also matches *-leaf-pid.txt)
+rm -f "$RALPH_DIR"/*-pid.txt 2>/dev/null || true
+
 # ============================================================
 # Archive previous run if branch changed
 # ============================================================
@@ -241,21 +254,59 @@ cleanup() {
   fi
 }
 
+# Kill a process (and its tree on Windows) by MSYS pid.
+# Windows: taskkill needs the WINPID — MSYS pids live in a different numbering
+# space (verified: MSYS pid 433 == winpid 35100; tasklist knows only 35100).
+# Passing the MSYS pid to taskkill silently no-ops and orphans the agent.
+# //T //F //PID use double slashes to stop MSYS path conversion.
+kill_pid_tree() {
+  local pid="$1" wp
+  [ -z "$pid" ] && return 0
+  if command -v tasklist >/dev/null 2>&1; then
+    wp=$(cat "/proc/$pid/winpid" 2>/dev/null || echo "")
+    if [ -n "$wp" ]; then
+      taskkill //T //F //PID "$wp" >/dev/null 2>&1 || true
+    fi
+    # Belt-and-suspenders: also try MSYS kill (works for MSYS processes)
+    kill "$pid" 2>/dev/null || true
+  else
+    kill "$pid" 2>/dev/null || true
+    command -v pkill >/dev/null 2>&1 && pkill -P "$pid" 2>/dev/null || true
+  fi
+  return 0
+}
+
 kill_claude_subprocesses() {
   echo "  Terminating subprocesses..."
 
-  # Kill all background jobs spawned by this shell
+  # Kill targets = union of: this shell's background jobs + tracked pid files.
+  # Background jobs alone are insufficient: after Ctrl+C the MSYS subshell
+  # dies and drops out of the jobs table, while the native claude.exe child
+  # (which never receives MSYS signals) keeps running orphaned.
+  local pids=""
   local child_pids
   child_pids=$(jobs -p 2>/dev/null) || true
-  if [ -n "$child_pids" ]; then
-    for cpid in $child_pids; do
-      if command -v tasklist >/dev/null 2>&1; then
-        taskkill /T /PID "$cpid" /F 2>/dev/null
-      else
-        kill "$cpid" 2>/dev/null || true
-      fi
+  [ -n "$child_pids" ] && pids="$child_pids"
+
+  local pf fp
+  for pf in "${RALPH_DIR}"/*-pid.txt; do
+    [ -f "$pf" ] || continue
+    fp=$(cat "$pf" 2>/dev/null)
+    [ -n "$fp" ] && pids="$pids $fp"
+  done
+
+  if [ -n "$pids" ]; then
+    local pid
+    # Glob order puts <label>-leaf-pid.txt before <label>-pid.txt for the same
+    # label ('l' < 'p'), so leaf processes (claude) are killed before parents.
+    for pid in $pids; do
+      kill_pid_tree "$pid"
     done
-    echo "  Terminated child jobs: $child_pids"
+    # Reap dead jobs so they don't linger as zombies in the jobs table
+    for pid in $child_pids; do
+      wait "$pid" 2>/dev/null || true
+    done
+    echo "  Terminated:$pids"
   fi
 }
 
@@ -520,17 +571,42 @@ verify_evaluator_evaluate_output() {
 # ============================================================
 
 # Check if the agent process for a given phase_label is still running.
-# Returns 0 if alive (kill -0 succeeds), 1 if dead or no pid file.
+# Returns 0 if alive, 1 if dead or no pid file.
+# MSYS2: kill -0 alone can false-positive on dead processes (cygwin pid
+# recycling) — an agent is only considered alive when BOTH kill -0 and
+# ps -p confirm it. ps -p is reliable here: the tracked pid is the MSYS
+# bash subshell, which ps always sees.
 _is_agent_alive() {
   local phase_label="$1"
   if [ -f "${RALPH_DIR}/${phase_label}-pid.txt" ]; then
     local _pid
     _pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
-    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null; then
-      return 0  # alive
+    if [ -n "$_pid" ] && kill -0 "$_pid" 2>/dev/null && ps -p "$_pid" >/dev/null 2>&1; then
+      return 0  # alive (confirmed by both kill -0 and ps)
     fi
   fi
   return 1  # dead or no pid file
+}
+
+# Reap an agent after wait_for_agent returns.
+# wait_for_agent may return while the agent is still alive (COMPLETE detected
+# in stdout is trusted regardless of pid). A lingering agent would overlap the
+# next phase and race on shared state files (contract.json / evaluation.json),
+# so give it a short grace to exit on its own, then kill it, then reap.
+# Also reaps zombies from the jobs table and removes pid tracking files.
+_reap_agent() {
+  local phase_label="$1" pid leaf
+  pid=$(cat "${RALPH_DIR}/${phase_label}-pid.txt" 2>/dev/null)
+  leaf=$(cat "${RALPH_DIR}/${phase_label}-leaf-pid.txt" 2>/dev/null)
+
+  if { [ -n "$leaf" ] && kill -0 "$leaf" 2>/dev/null; } || { [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; }; then
+    sleep 2  # grace: COMPLETE implies all outputs were written before it
+  fi
+  [ -n "$leaf" ] && kill_pid_tree "$leaf"
+  [ -n "$pid" ] && kill_pid_tree "$pid"
+  [ -n "$pid" ] && wait "$pid" 2>/dev/null || true
+  rm -f "${RALPH_DIR}/${phase_label}-pid.txt" "${RALPH_DIR}/${phase_label}-leaf-pid.txt"
+  return 0
 }
 
 # Check if agent has produced valid contract output (contract phases only).
@@ -963,10 +1039,24 @@ run_agent() {
       CLAUDE_CMD="claude-tap"
       echo "  [TAP] Capturing gen/eva API traffic via claude-tap"
     fi
-    ( cd "$PROJECT_DIR" && assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" $CLAUDE_CMD --dangerously-skip-permissions --print >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" || true ) &
+    # Two-layer pid tracking:
+    #   <label>-pid.txt      — outer subshell pid (used by _is_agent_alive)
+    #   <label>-leaf-pid.txt — claude's own MSYS pid (used by cleanup to kill
+    #                          the native process that ignores MSYS signals)
+    # The pipeline is backgrounded INSIDE the subshell so $! there is the
+    # pipeline's last element (claude); the subshell itself waits on it.
+    (
+      cd "$PROJECT_DIR" || exit 1
+      assemble_agent_context "$prompt_file" | tee "${RALPH_DIR}/${phase_label}-context.log" | \
+        HARNESS_INDEX_DIR="$INDEX_DIR" RALPH_ROLE="$role" RALPH_PROJECT_DIR="$PROJECT_DIR" \
+        $CLAUDE_CMD --dangerously-skip-permissions --print \
+          >"${RALPH_DIR}/${phase_label}-stdout.log" 2>"${RALPH_DIR}/${phase_label}-stderr.log" &
+      echo $! > "${RALPH_DIR}/${phase_label}-leaf-pid.txt"
+      wait
+    ) &
     echo $! > "${RALPH_DIR}/${phase_label}-pid.txt"
-    wait_for_agent "$phase_label"
-    rm -f "${RALPH_DIR}/${phase_label}-pid.txt"
+    wait_for_agent "$phase_label" || true
+    _reap_agent "$phase_label"
   fi
 
   cost_track_end "$phase_label"
